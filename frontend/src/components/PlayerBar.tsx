@@ -57,7 +57,7 @@ export default function PlayerBar() {
               <QueueIcon />
             </button>
           </div>
-          <div className="hidden w-full items-center gap-2 text-xs tabular-nums text-muted md:flex">
+          <div className="hidden w-full items-center gap-2 font-mono text-xs tabular-nums text-muted md:flex">
             <span data-testid="time-current" className="w-10 text-right">{formatTime(p.currentTime)}</span>
             <input
               data-testid="seek"

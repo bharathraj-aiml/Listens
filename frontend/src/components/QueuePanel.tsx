@@ -39,7 +39,7 @@ export default function QueuePanel() {
                 <span className="block truncate text-xs text-muted">{t.artist.name}</span>
               </span>
             </button>
-            <span className="text-xs tabular-nums text-muted">{formatDuration(t.duration_ms)}</span>
+            <span className="font-mono text-xs tabular-nums text-muted">{formatDuration(t.duration_ms)}</span>
             <button aria-label={`Remove ${t.title} from queue`} onClick={() => removeAt(i)} className="rounded-full p-1 text-muted opacity-60 hover:text-danger group-hover:opacity-100">
               <CloseIcon width={16} height={16} />
             </button>

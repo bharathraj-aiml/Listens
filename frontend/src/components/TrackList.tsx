@@ -9,7 +9,7 @@ import { currentTrack, usePlayer } from "@/store/player";
 
 const STATUS_STYLE: Record<Track["status"], string> = {
   uploaded: "bg-raise text-muted",
-  processing: "bg-glow/15 text-glow",
+  processing: "bg-accent/15 text-accent",
   ready: "bg-ok/15 text-ok",
   failed: "bg-danger/15 text-danger",
 };
@@ -83,7 +83,7 @@ export default function TrackList({ tracks, showStatus = false, onDelete }: Prop
                 <button aria-label={`Add ${t.title} to queue`} title="Add to queue" onClick={() => addToQueue(t)} className="rounded p-1 text-muted hover:text-fg"><PlusIcon width={18} height={18} /></button>
               </div>
             )}
-            <span className="hidden w-12 text-right text-xs tabular-nums text-muted sm:block">{formatDuration(t.duration_ms)}</span>
+            <span className="hidden w-12 text-right font-mono text-xs tabular-nums text-muted sm:block">{formatDuration(t.duration_ms)}</span>
             {onDelete && (
               <button aria-label={`Delete ${t.title}`} onClick={() => onDelete(t)} className="rounded px-1.5 py-1 text-xs text-muted hover:text-danger">Delete</button>
             )}
