@@ -1,4 +1,4 @@
-# Shadow Listens - Phase 1 stack: data stores + migrations + auth service + gateway.
+# Shadow Listens - Phase 2 stack: data stores, migrations, auth/catalogue/stream/worker, web app, gateway.
 # Start: cp .env.example .env && docker compose up --build
 name: shadow-listens
 
@@ -9,6 +9,14 @@ x-python-env: &python-env
   ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-15}
   REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-7}
   CORS_ORIGINS: ${CORS_ORIGINS}
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  S3_BUCKET_AUDIO: ${S3_BUCKET_AUDIO}
+  S3_BUCKET_COVERS: ${S3_BUCKET_COVERS}
+  STREAM_SIGNING_SECRET: ${STREAM_SIGNING_SECRET}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-500}
+  HLS_AUDIO_CODEC: ${HLS_AUDIO_CODEC:-aac}
 
 services:
   postgres:
@@ -86,6 +94,64 @@ services:
       timeout: 3s
       retries: 20
 
+  catalogue:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/catalogue/Dockerfile
+    environment: *python-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  stream:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/stream/Dockerfile
+    environment: *python-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Background transcoder: Redis Stream jobs -> FFmpeg -> HLS in MinIO. Scale with `--scale worker=N`.
+  worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment: *python-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  frontend:
+    restart: unless-stopped
+    build:
+      context: ./frontend
+    depends_on:
+      - auth
+
   gateway:
     restart: unless-stopped
     image: nginx:1.27-alpine
@@ -96,6 +162,12 @@ services:
     depends_on:
       auth:
         condition: service_healthy
+      catalogue:
+        condition: service_healthy
+      stream:
+        condition: service_healthy
+      frontend:
+        condition: service_started
 
 volumes:
   pgdata:
