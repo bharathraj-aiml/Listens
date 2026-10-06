@@ -89,6 +89,8 @@ class Album(Base):
     release_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = _created_at()
 
+    artist: Mapped[Artist] = relationship(lazy="joined")
+
     __table_args__ = (Index("ix_albums_artist_id", "artist_id"),)
 
 
@@ -114,15 +116,21 @@ class Track(Base):
     hls_prefix: Mapped[str | None] = mapped_column(String(255))  # folder holding HLS renditions
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     source_bitrate_kbps: Mapped[int | None] = mapped_column(Integer)
+    cover_key: Mapped[str | None] = mapped_column(String(255))  # object key in the covers bucket
+    content_sha256: Mapped[str | None] = mapped_column(String(64))  # dedupe re-uploads per user
+    error: Mapped[str | None] = mapped_column(Text)  # why transcoding failed
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
 
     artist: Mapped[Artist] = relationship(lazy="joined")
+    album: Mapped["Album | None"] = relationship(lazy="joined")
 
     __table_args__ = (
         CheckConstraint("status IN ('uploaded','processing','ready','failed')", name="ck_tracks_status"),
         Index("ix_tracks_artist_id", "artist_id"),
         Index("ix_tracks_album_id", "album_id"),
         Index("ix_tracks_status_created", "status", "created_at"),
+        Index("uq_tracks_uploader_sha", "uploader_id", "content_sha256", unique=True),
     )
 
 
