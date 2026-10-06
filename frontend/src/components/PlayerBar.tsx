@@ -38,21 +38,22 @@ export default function PlayerBar() {
 
         <div className="flex flex-col items-center gap-1">
           <div className="flex items-center gap-1">
-            <button data-testid="prev" aria-label="Previous" onClick={p.prev} className="rounded-full p-2 text-muted hover:text-fg">
+            {/* size-11 = 44px, the WCAG/Material minimum touch target; these are the most-tapped controls in the app */}
+            <button data-testid="prev" aria-label="Previous" onClick={p.prev} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg">
               <PrevIcon />
             </button>
             <button
               data-testid="play-toggle"
               aria-label={p.playing ? "Pause" : "Play"}
               onClick={p.toggle}
-              className="rounded-full bg-fg p-2.5 text-ink hover:scale-105 active:scale-95"
+              className="flex size-12 items-center justify-center rounded-full bg-fg text-ink hover:scale-105 active:scale-95"
             >
               {p.playing ? <PauseIcon /> : <PlayIcon />}
             </button>
-            <button data-testid="next" aria-label="Next" onClick={p.next} disabled={!hasNext} className="rounded-full p-2 text-muted hover:text-fg disabled:opacity-30">
+            <button data-testid="next" aria-label="Next" onClick={p.next} disabled={!hasNext} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg disabled:opacity-30">
               <NextIcon />
             </button>
-            <button aria-label="Queue" data-testid="queue-toggle" onClick={() => p.setQueueOpen(true)} className="rounded-full p-2 text-muted hover:text-fg md:hidden">
+            <button aria-label="Queue" data-testid="queue-toggle" onClick={() => p.setQueueOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
               <QueueIcon />
             </button>
           </div>
@@ -75,7 +76,7 @@ export default function PlayerBar() {
 
         <div className="hidden items-center justify-end gap-3 md:flex">
           <QualitySelect />
-          <button aria-label={p.muted ? "Unmute" : "Mute"} onClick={p.toggleMute} className="text-muted hover:text-fg">
+          <button aria-label={p.muted ? "Unmute" : "Mute"} onClick={p.toggleMute} className="flex size-9 items-center justify-center text-muted hover:text-fg">
             {p.muted || p.volume === 0 ? <MuteIcon /> : <VolumeIcon />}
           </button>
           <input

@@ -19,7 +19,7 @@ export default function QueuePanel() {
         <h2 className="font-semibold">Queue</h2>
         <div className="flex items-center gap-2">
           <QualitySelect />
-          <button aria-label="Close queue" onClick={() => setQueueOpen(false)} className="rounded-full p-1.5 text-muted hover:text-fg">
+          <button aria-label="Close queue" onClick={() => setQueueOpen(false)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg">
             <CloseIcon />
           </button>
         </div>
