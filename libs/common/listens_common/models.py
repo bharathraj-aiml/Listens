@@ -120,6 +120,8 @@ class Track(Base):
     content_sha256: Mapped[str | None] = mapped_column(String(64))  # dedupe re-uploads per user
     error: Mapped[str | None] = mapped_column(Text)  # why transcoding failed
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lyrics: Mapped[str | None] = mapped_column(Text)  # plain unsynced lyrics (ID3 USLT / Vorbis LYRICS)
+    lyrics_synced: Mapped[str | None] = mapped_column(Text)  # LRC text "[mm:ss.xx]line", from ID3 SYLT if present
     created_at: Mapped[datetime] = _created_at()
 
     artist: Mapped[Artist] = relationship(lazy="joined")
@@ -171,6 +173,8 @@ class PlaylistTrack(Base):
         Uuid, ForeignKey("users.id", ondelete="SET NULL")
     )
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    track: Mapped[Track] = relationship(lazy="joined")
 
     # Deliberately not UNIQUE(playlist_id, position): reordering would need deferred
     # constraints. Ordering is (position, id) and positions are rewritten on reorder.

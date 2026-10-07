@@ -11,27 +11,29 @@ from sqlalchemy.orm import Session
 
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
-from listens_common.models import Album, Artist, Track
+from listens_common.models import Album, Artist, Follow, Track
 from listens_common.storage import delete_prefix, get_s3
 from listens_common.web import current_user_id, get_redis
 
 from . import search as search_mod
+from .library import router as library_router
 from .schemas import (
-    AlbumDetail, AlbumHit, AlbumRef, ArtistDetail, ArtistRef, PlaylistHit, SearchOut, TrackOut, UploadOut,
+    AlbumDetail, AlbumHit, AlbumRef, ArtistDetail, ArtistRef, LyricsOut, PlaylistHit, SearchOut, TrackOut, UploadOut,
 )
 from .serialize import track_out
-from .tags import read_tags
+from .tags import read_lyrics, read_tags
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("catalogue")
 
-app = FastAPI(title="Shadow Listens - Catalogue", version="0.2.0")
+app = FastAPI(title="Shadow Listens - Catalogue", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origin_list,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.include_router(library_router)
 
 TRANSCODE_STREAM = "jobs:transcode"
 ALLOWED_EXT = {".mp3", ".flac", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac"}
@@ -118,6 +120,7 @@ def upload(
         return UploadOut(track=track_out(existing, settings, user_id), duplicate=True)
 
     tags = read_tags(file.file)
+    lyrics = read_lyrics(file.file)
     stem = os.path.splitext(os.path.basename(file.filename or "Untitled"))[0]
     # Explicit form values win over embedded tags, which win over filename/"Unknown Artist".
     final_title = (title or tags.get("title") or stem).strip()[:200]
@@ -134,6 +137,7 @@ def upload(
         id=track_id, artist_id=artist_row.id, album_id=album_row.id if album_row else None, uploader_id=user_id,
         title=final_title, genre=(genre or tags.get("genre") or None), license=license.strip(),
         status="uploaded", source_key=source_key, content_sha256=digest,
+        lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
     )
     db.add(track)
     try:
@@ -201,6 +205,20 @@ def get_track(
     return track_out(track, settings, user_id)
 
 
+@app.get("/tracks/{track_id}/lyrics", response_model=LyricsOut)
+def get_lyrics(
+    track_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(current_user_id),
+    db: Session = Depends(get_db),
+) -> LyricsOut:
+    # Lyrics can be long, so they're fetched on demand (opening the lyrics panel), not
+    # embedded in every TrackOut returned by list/search endpoints.
+    track = _get_track(db, track_id)
+    if track.status != "ready" and track.uploader_id != user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
+    return LyricsOut(lyrics=track.lyrics, lyrics_synced=track.lyrics_synced)
+
+
 @app.delete("/tracks/{track_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_track(
     track_id: uuid.UUID,
@@ -234,8 +252,10 @@ def get_artist(
     if artist is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Artist not found")
     tracks = db.scalars(_tracks_query().where(Track.artist_id == artist_id, Track.status == "ready")).unique()
+    followed = db.get(Follow, (user_id, "artist", artist_id)) is not None
     return ArtistDetail(
-        id=artist.id, name=artist.name, bio=artist.bio, tracks=[track_out(t, settings, user_id) for t in tracks]
+        id=artist.id, name=artist.name, bio=artist.bio, followed=followed,
+        tracks=[track_out(t, settings, user_id) for t in tracks],
     )
 
 

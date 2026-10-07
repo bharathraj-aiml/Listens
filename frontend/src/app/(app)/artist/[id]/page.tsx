@@ -2,11 +2,10 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import FollowButton from "@/components/FollowButton";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
 import { get } from "@/lib/api";
-import type { Track } from "@/lib/types";
-
-interface ArtistDetail { id: string; name: string; bio: string | null; tracks: Track[] }
+import type { ArtistDetail } from "@/lib/types";
 
 export default function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,7 +22,10 @@ export default function ArtistPage() {
       <header className="space-y-3">
         <h1 data-testid="page-title" className="text-3xl font-semibold tracking-tight">{artist.name}</h1>
         {artist.bio && <p className="max-w-2xl text-sm text-muted">{artist.bio}</p>}
-        <PlayAllButton tracks={artist.tracks} />
+        <div className="flex items-center gap-3">
+          <PlayAllButton tracks={artist.tracks} />
+          <FollowButton artistId={artist.id} initialFollowed={artist.followed} />
+        </div>
       </header>
       <TrackList tracks={artist.tracks} />
     </div>

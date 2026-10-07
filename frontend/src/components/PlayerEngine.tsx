@@ -2,6 +2,7 @@
 
 import Hls, { type Level } from "hls.js";
 import { useEffect, useRef } from "react";
+import { post } from "@/lib/api";
 import { getStreamUrl, invalidateStreamUrl, prefetchTrack } from "@/lib/stream";
 import { currentTrack, hydratePlayerPrefs, type Quality, usePlayer } from "@/store/player";
 
@@ -192,6 +193,12 @@ export default function PlayerEngine() {
     return () => {
       cancelled = true;
     };
+  }, [track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- record the play for "recently played" (fire-and-forget; Phase 4 adds verified-stream counting) ---
+  useEffect(() => {
+    if (!track) return;
+    post("/api/catalogue/plays", { track_id: track.id }).catch(() => {});
   }, [track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- play/pause intent ----------------------------------------------------------------------

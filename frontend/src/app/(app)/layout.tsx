@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import LyricsPanel from "@/components/LyricsPanel";
 import PlayerBar from "@/components/PlayerBar";
 import PlayerEngine from "@/components/PlayerEngine";
 import QueuePanel from "@/components/QueuePanel";
@@ -9,6 +10,7 @@ import Sidebar from "@/components/Sidebar";
 import { get } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { useAuth } from "@/store/auth";
+import { useLikes } from "@/store/likes";
 
 /**
  * Authenticated shell. Because this layout stays mounted while you navigate between its pages,
@@ -17,6 +19,7 @@ import { useAuth } from "@/store/auth";
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { ready, accessToken, user, load, setUser } = useAuth();
+  const loadLikes = useLikes((s) => s.load);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -25,6 +28,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (accessToken && !user) get<User>("/api/auth/me").then(setUser).catch(() => {});
   }, [accessToken, user, setUser]);
+  useEffect(() => {
+    if (accessToken) loadLikes();
+  }, [accessToken, loadLikes]);
 
   if (!ready || !accessToken) return null;
 
@@ -34,6 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">{children}</main>
       <PlayerBar />
       <QueuePanel />
+      <LyricsPanel />
       <PlayerEngine />
     </div>
   );

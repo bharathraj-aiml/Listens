@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import Cover from "@/components/Cover";
-import { MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, VolumeIcon } from "@/components/icons";
+import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, VolumeIcon } from "@/components/icons";
+import LikeButton from "@/components/LikeButton";
 import QualitySelect from "@/components/QualitySelect";
 import { formatTime } from "@/lib/format";
 import { currentTrack, usePlayer } from "@/store/player";
@@ -27,13 +28,14 @@ export default function PlayerBar() {
       <div className="mx-auto grid max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 md:grid-cols-[1fr_minmax(320px,2fr)_1fr] md:px-4">
         <div className="flex min-w-0 items-center gap-3">
           <Cover id={track.id} url={track.cover_url} size={44} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div data-testid="now-title" className="truncate text-sm font-medium">{track.title}</div>
             <Link href={`/artist/${track.artist.id}`} className="block truncate text-xs text-muted hover:text-fg hover:underline">
               {track.artist.name}
             </Link>
             {p.error && <div role="alert" data-testid="player-error" className="truncate text-xs text-danger">{p.error}</div>}
           </div>
+          <LikeButton trackId={track.id} />
         </div>
 
         <div className="flex flex-col items-center gap-1">
@@ -52,6 +54,9 @@ export default function PlayerBar() {
             </button>
             <button data-testid="next" aria-label="Next" onClick={p.next} disabled={!hasNext} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg disabled:opacity-30">
               <NextIcon />
+            </button>
+            <button aria-label="Lyrics" data-testid="lyrics-toggle" onClick={() => p.setLyricsOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
+              <LyricsIcon />
             </button>
             <button aria-label="Queue" data-testid="queue-toggle" onClick={() => p.setQueueOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
               <QueueIcon />
@@ -90,7 +95,10 @@ export default function PlayerBar() {
             onChange={(e) => p.setVolume(Number(e.target.value))}
             className="h-1 w-24 cursor-pointer"
           />
-          <button aria-label="Queue" data-testid="queue-toggle-desktop" onClick={() => p.setQueueOpen(!p.queueOpen)} className={`rounded-full p-2 hover:text-fg ${p.queueOpen ? "text-accent" : "text-muted"}`}>
+          <button aria-label="Lyrics" data-testid="lyrics-toggle-desktop" onClick={() => p.setLyricsOpen(!p.lyricsOpen)} className={`flex size-9 items-center justify-center rounded-full hover:text-fg ${p.lyricsOpen ? "text-accent" : "text-muted"}`}>
+            <LyricsIcon />
+          </button>
+          <button aria-label="Queue" data-testid="queue-toggle-desktop" onClick={() => p.setQueueOpen(!p.queueOpen)} className={`flex size-9 items-center justify-center rounded-full hover:text-fg ${p.queueOpen ? "text-accent" : "text-muted"}`}>
             <QueueIcon />
           </button>
         </div>

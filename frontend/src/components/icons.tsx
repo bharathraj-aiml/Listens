@@ -1,6 +1,7 @@
 import {
-  House, MagnifyingGlass, Pause, Play, Plus, Queue, SkipBack, SkipForward,
-  SpeakerHigh, SpeakerX, UploadSimple, X, type Icon, type IconProps,
+  CaretDown, CaretUp, Heart, House, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus, Queue,
+  SkipBack, SkipForward, SpeakerHigh, SpeakerX, TextAlignLeft, Trash, UploadSimple, X,
+  type Icon, type IconProps,
 } from "@phosphor-icons/react";
 
 /** Phosphor icon set, "bold" weight, standardised to 20px unless a caller overrides size/width/height.
@@ -23,3 +24,10 @@ export const SearchIcon = wrap(MagnifyingGlass);
 export const UploadIcon = wrap(UploadSimple);
 export const CloseIcon = wrap(X);
 export const PlusIcon = wrap(Plus);
+export const HeartIcon = wrap(Heart);
+export const LyricsIcon = wrap(TextAlignLeft);
+export const PlaylistIcon = wrap(Playlist);
+export const EditIcon = wrap(PencilSimple);
+export const TrashIcon = wrap(Trash);
+export const CaretUpIcon = wrap(CaretUp);
+export const CaretDownIcon = wrap(CaretDown);

@@ -38,6 +38,7 @@ interface PlayerState {
   quality: Quality;
   levels: number[]; // kbps renditions the current track offers (empty until its manifest loads)
   queueOpen: boolean;
+  lyricsOpen: boolean;
   seekRequest: { to: number; n: number } | null;
 
   playQueue: (tracks: Track[], startIndex?: number) => void;
@@ -54,6 +55,7 @@ interface PlayerState {
   toggleMute: () => void;
   setQuality: (q: Quality) => void;
   setQueueOpen: (open: boolean) => void;
+  setLyricsOpen: (open: boolean) => void;
   // engine -> store
   setTime: (t: number) => void;
   setDuration: (d: number) => void;
@@ -75,6 +77,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   quality: "auto",
   levels: [],
   queueOpen: false,
+  lyricsOpen: false,
   seekRequest: null,
 
   playQueue: (tracks, startIndex = 0) =>
@@ -121,7 +124,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ quality });
     savePrefs(get().volume, quality);
   },
-  setQueueOpen: (queueOpen) => set({ queueOpen }),
+  // Mutually exclusive: both are fixed inset-y-0 side panels, so two open at once would overlap.
+  setQueueOpen: (queueOpen) => set({ queueOpen, lyricsOpen: queueOpen ? false : get().lyricsOpen }),
+  setLyricsOpen: (lyricsOpen) => set({ lyricsOpen, queueOpen: lyricsOpen ? false : get().queueOpen }),
   setTime: (currentTime) => set({ currentTime }),
   setDuration: (duration) => set({ duration }),
   setBuffering: (buffering) => set({ buffering }),

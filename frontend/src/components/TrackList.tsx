@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import AddToPlaylistMenu from "@/components/AddToPlaylistMenu";
 import Cover from "@/components/Cover";
 import { PlayIcon, PlusIcon } from "@/components/icons";
+import LikeButton from "@/components/LikeButton";
 import { formatDuration } from "@/lib/format";
 import type { Track } from "@/lib/types";
 import { currentTrack, usePlayer } from "@/store/player";
@@ -78,9 +80,11 @@ export default function TrackList({ tracks, showStatus = false, onDelete }: Prop
               <span data-testid="track-status" className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[t.status]}`}>{STATUS_LABEL[t.status]}</span>
             )}
             {ready && (
-              <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
+              <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
+                <LikeButton trackId={t.id} size={18} />
+                <AddToPlaylistMenu trackId={t.id} trackTitle={t.title} />
                 <button aria-label={`Play ${t.title} next`} title="Play next" onClick={() => playNext(t)} className="rounded px-1.5 py-1 text-xs text-muted hover:text-fg">Next</button>
-                <button aria-label={`Add ${t.title} to queue`} title="Add to queue" onClick={() => addToQueue(t)} className="rounded p-1 text-muted hover:text-fg"><PlusIcon width={18} height={18} /></button>
+                <button aria-label={`Add ${t.title} to queue`} title="Add to queue" onClick={() => addToQueue(t)} className="flex size-9 items-center justify-center rounded-full text-muted hover:text-fg"><PlusIcon width={18} height={18} /></button>
               </div>
             )}
             <span className="hidden w-12 text-right font-mono text-xs tabular-nums text-muted sm:block">{formatDuration(t.duration_ms)}</span>

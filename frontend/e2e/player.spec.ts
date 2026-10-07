@@ -5,7 +5,10 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 // Needs `ffmpeg` on the machine running the tests (to synthesise two tone files).
-const run = Date.now().toString(36);
+// Random, not just Date.now(): a base36 timestamp's leading (most significant) digits barely
+// change over a few minutes, so slicing a prefix of a title built from one alone can collide
+// across repeated runs against the same un-reset dev stack. Random digits stay unique throughout.
+const run = Math.random().toString(36).slice(2, 10);
 const A = `Alpha${run}`;
 const B = `Beta${run}`;
 const user = `e2e_${run}`;
@@ -14,7 +17,7 @@ const password = "correct horse battery";
 function tone(dir: string, title: string, hz: number, seconds: number): string {
   const file = path.join(dir, `${title}.mp3`);
   execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `sine=frequency=${hz}:duration=${seconds}`,
-    "-b:a", "320k", "-metadata", `title=${title}`, "-metadata", "artist=E2E Band", "-metadata", "album=E2E Album", file]);
+    "-b:a", "320k", "-metadata", `title=${title}`, "-metadata", `artist=E2E Band ${run}`, "-metadata", "album=E2E Album", file]);
   return file;
 }
 
@@ -50,10 +53,21 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await expect(rows).toHaveCount(2);
   await expect(page.getByTestId("track-status")).toHaveText(["Ready", "Ready"], { timeout: 90_000 });
 
-  // --- play from Home ----------------------------------------------------------------------------
+  // --- play from the artist page -------------------------------------------------------------------
+  // Home's "New uploads" is a global feed (every user's ready tracks, not just this run's), and
+  // clicking Play there queues *everything visible in that list* - which grows as other e2e
+  // specs upload in the same session, making an exact queue size unpredictable from Home. The
+  // artist page is naturally bounded to exactly these 2 tracks instead: each test run registers
+  // a fresh user, and artists are deduped per-uploader, so "E2E Band" here is this run's own,
+  // private artist row with nothing else attached to it.
   await page.getByRole("link", { name: "Home" }).first().click();
-  await expect(page.getByTestId("track-row")).toHaveCount(2);
+  const newUploads = page.getByRole("region", { name: "New uploads" });
+  await expect(newUploads.getByTestId("track-row").filter({ hasText: A })).toHaveCount(1);
+  await expect(newUploads.getByTestId("track-row").filter({ hasText: B })).toHaveCount(1);
   await expect(page.getByTestId("player-bar")).toHaveCount(0); // nothing playing yet
+  await newUploads.getByTestId("track-row").filter({ hasText: A }).getByText(`E2E Band ${run}`).click();
+  await expect(page.getByTestId("page-title")).toHaveText(`E2E Band ${run}`);
+  await expect(page.getByTestId("track-row")).toHaveCount(2); // exactly this run's two tracks
   await page.getByRole("button", { name: `Play ${A}`, exact: true }).click();
   await expect(page.getByTestId("now-title")).toHaveText(A);
   await expect.poll(() => seconds(page), { timeout: 20_000 }).toBeGreaterThanOrEqual(2); // audio is really advancing
@@ -98,6 +112,7 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   let urlRequests = 0;
   page.on("request", (r) => /\/api\/stream\/tracks\/[^/]+\/url$/.test(r.url()) && urlRequests++);
   const prefetched = page.waitForResponse((r) => /\/api\/stream\/tracks\/[^/]+\/url$/.test(r.url()), { timeout: 15_000 });
+  // (still on the artist page: bounded to exactly A and B, so this label is unique here)
   await page.getByRole("button", { name: `Add ${B} to queue` }).click(); // queue = [B, A, B]
   await prefetched;
   await page.waitForTimeout(1500); // let the playlist + first segment finish downloading
@@ -136,7 +151,10 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await page.getByTestId("search-input").fill(B.slice(0, 8).toUpperCase());
   await expect(page.getByTestId("track-row")).toHaveCount(1);
   await expect(page.getByTestId("track-row")).toHaveAttribute("data-title", B);
-  await page.getByTestId("search-input").fill("e2e ban"); // by artist name, two tokens
+  // Two tokens, by artist name; the run id is folded into the artist name (not just "e2e ban")
+  // so this stays scoped to this run's own tracks even when the suite is re-run without a
+  // database reset in between (other runs' tracks share the "E2E Band" name but not the suffix).
+  await page.getByTestId("search-input").fill(`ban ${run}`);
   await expect(page.getByTestId("track-row")).toHaveCount(2);
   await page.getByTestId("search-input").fill("zzzznothing");
   await expect(page.getByTestId("no-results")).toBeVisible();

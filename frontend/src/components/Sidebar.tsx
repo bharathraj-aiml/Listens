@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { HomeIcon, SearchIcon, UploadIcon } from "@/components/icons";
+import { HomeIcon, PlaylistIcon, SearchIcon, UploadIcon } from "@/components/icons";
 import { Logo } from "@/components/Logo";
 import { post } from "@/lib/api";
 import { useAuth } from "@/store/auth";
@@ -11,6 +11,7 @@ import { usePlayer } from "@/store/player";
 const NAV = [
   { href: "/", label: "Home", Icon: HomeIcon },
   { href: "/search", label: "Search", Icon: SearchIcon },
+  { href: "/playlists", label: "Playlists", Icon: PlaylistIcon },
   { href: "/upload", label: "Upload", Icon: UploadIcon },
 ];
 
