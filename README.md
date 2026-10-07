@@ -11,13 +11,15 @@ the next starts.
   short-lived stream URLs, web player (queue, seek, volume, quality, prefetch, persistent mini-player), full-text search.
 - ✅ **Phase 3 – Library & social:** playlists (CRUD, reorder, collaborative), likes, follows,
   recently played, Home sections (recently played / made for you / new uploads), synced lyrics.
-- ⏳ Phase 4 – event tracking (verified-stream counting, skip reasons, analytics page) — next.
+- ✅ **Phase 4 – Event tracking:** play/skip events → Redis Streams → a consumer service, verified
+  streams (30s threshold), and an analytics page (top tracks, skip rate, listening by hour).
+- ⏳ Phase 5 – recommendations (ALS collaborative filtering, Discover Weekly, similar tracks) — next.
 
 ## Layout
 
 ```
 .
-├── docker-compose.yml          # postgres, redis, minio, migrate, auth, catalogue, stream, worker, frontend, gateway
+├── docker-compose.yml          # postgres, redis, minio, migrate, auth, catalogue, stream, worker, events, frontend, gateway
 ├── .env.example                # copy to .env
 ├── gateway/nginx.conf          # single entry point (:8080): /api/auth, /api/catalogue, /api/stream, / -> web app
 ├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper
@@ -25,9 +27,10 @@ the next starts.
 ├── migrations/                 # Alembic: 0001 schema, 0002 catalogue + full-text (GIN), 0003 lyrics columns
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
-│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home
+│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events ingest, analytics
 │   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage
-│   └── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art
+│   ├── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art
+│   └── events/                  # Redis-Stream consumer: play/skip events -> play_events rows
 ├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ Playwright e2e)
 └── scripts/import_folder.py    # bulk-import a music folder through the public API
 ```
@@ -83,6 +86,10 @@ the filename and "Unknown Artist". Budget disk for originals **plus** HLS (rough
     account — it falls back to new releases), New uploads.
 11. **Lyrics:** open the lyrics panel (text icon next to the queue icon) on any track. Most files show "No lyrics available"
     unless they have embedded ID3 `USLT`/`SYLT` tags (or Vorbis/MP4 equivalents) — see the note under "How it works".
+12. **Analytics:** play a track for 30+ seconds (check it against the Network tab: a `play_end` event with `ms_played >= 30000`
+    fires on the next track change), then check the Analytics page — it should show up under *Top tracks*. Click Next on a
+    track and confirm a `skip` event fires with `reason: "next_button"`. Skip rate needs at least 2 plays of a track to appear.
+
 
 ## Tests
 
@@ -93,16 +100,19 @@ python -m venv .venv
 # needs ffmpeg + ffprobe on PATH
 (cd libs/common        && pytest)   # signing + "migrations produce exactly the ORM schema"
 (cd services/auth      && pytest)
-(cd services/catalogue && pytest)   # upload, catalogue, search (SQLite fallback)
+(cd services/catalogue && pytest)   # upload, catalogue, search, playlists, likes, follows, lyrics, events, analytics
 (cd services/stream    && pytest)   # signed URLs, path whitelist, expiry/tamper cases
 (cd services/worker    && pytest)   # real FFmpeg transcodes, retry/failed/sweep logic
+(cd services/events    && pytest)   # Redis Stream consumer: insert/retry/drop/sweep logic
 
 # Postgres full-text search (incl. "planner really uses the GIN indexes" check) needs a real database:
 TEST_PG_URL=postgresql+psycopg2://user@localhost:5432/scratch_db  (cd services/catalogue && pytest tests/test_search_postgres.py)
 ```
 
-Browser end-to-end (register → upload → transcode → play → seek → quality → queue → persistence → search → logout),
-against a running stack:
+Browser end-to-end, against a running stack - four specs: the core player flow (register → upload →
+transcode → play → seek → quality → queue → persistence → search → logout), playlists/likes/follow/lyrics,
+and two covering events/analytics (the client fires the right event with the right reason; the analytics
+page renders seeded data correctly):
 
 ```bash
 cd frontend && npm install && npx playwright install chromium
@@ -152,6 +162,16 @@ embedded in every track response. The player's Lyrics panel highlights the curre
 **Most files won't have any of this** — checked across the 160 real MP3s used for Phase 2 testing, zero had embedded
 lyrics in any common frame, so expect "No lyrics available" unless a file was tagged with a tool that writes `USLT`/`SYLT`.
 
+**Event tracking.** `POST /api/catalogue/events` (play_start / play_end / skip) `XADD`s to the Redis Stream `jobs:events`
+and returns immediately - it's a hot path (fires on every track load and every skip), so it doesn't wait on a database
+write. A dedicated `events` service (the same consumer-group pattern as the transcode worker) drains that stream into
+`play_events`. `like` and `add_to_playlist` aren't client-submittable event types; they're published server-side as a
+side effect of the existing `/likes` and `/playlists/*/tracks` endpoints, so there's one write path per mutation, not two.
+The player tracks actual played-time per track from `timeupdate` deltas (clamped per tick so a seek can't inflate it),
+and tags the outgoing track's closing event as `play_end` (natural completion, via the `ended` handler) or `skip` (an
+explicit reason - `next_button` / `previous_button` / `track_select` - threaded through the player store by whichever
+action caused the change). A "stream" only counts for the Analytics page once `ms_played >= 30000`.
+
 ## Key decisions
 
 - **Tokens:** access JWT stateless (15 min); refresh JWT stateful in Redis, rotated on use (atomic `GETDEL`), revoked on logout.
@@ -166,13 +186,21 @@ lyrics in any common frame, so expect "No lyrics available" unless a file was ta
 - **Python's `0 or -1` falsy-zero trap:** the first track added to a playlist (position 0) was getting duplicated at
   position 0 again, because `(max_position or -1) + 1` treats a real `0` the same as "no rows yet". Fixed to an explicit
   `is None` check; covered by a regression test.
+- **Redis Stream fields are always strings:** `PlayEvent.user_id`/`track_id` are typed `Uuid` columns, so the events
+  consumer needs an explicit `uuid.UUID(...)` conversion - passing the raw string straight through raised deep inside
+  SQLAlchemy's parameter binding. Same bug class the transcode worker didn't have (it never round-trips UUIDs through
+  Redis), caught immediately by the consumer's own test suite.
+- **CSS percentage heights need a definite-height ancestor:** the listening-by-hour bar chart's columns are sized by
+  content (`items-end`, no stretch), so a bar using `height: X%` had nothing to resolve against and silently rendered
+  at 0px. Fixed to a computed pixel height. Caught only by looking at an actual screenshot - the e2e test checked the
+  bars' `data-count` attributes, which were correct, not their rendered geometry, which wasn't.
 
 ## Verified
 
-This was run for real, three times over: rebuilding Phase 1 from scratch, Phase 2, and Phase 3 — on actual Docker
-Desktop (Windows), not a simulated or sandboxed substitute.
+This was run for real, four times over: rebuilding Phase 1 from scratch, Phase 2, Phase 3, and Phase 4 — on actual
+Docker Desktop (Windows), not a simulated or sandboxed substitute.
 
-- `docker compose up --build`: all 9 containers reach healthy/running.
+- `docker compose up --build`: all 10 containers reach healthy/running.
 - Full upload → transcode → stream pipeline exercised via curl against the live gateway: register, upload (tags read
   correctly from a real file), poll to `ready`, fetch the signed URL, master playlist, a variant playlist, a segment
   (right content-type and byte count), cover art, full-text search finding the track, a tampered/garbage token → 403,
@@ -190,19 +218,25 @@ Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- All 75 Python tests (5 + 13 + 7 + 13 + 37 across the five Python packages, including the Phase 3 playlist/likes/
-  follows/plays/lyrics suite) and a clean `tsc --noEmit` pass locally, outside Docker.
-- **Phase 3 specifically:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes,
-  follows, a collaborative playlist edited by a second account, reorder, recently-played ordering, made-for-you
-  fallback); a new Playwright spec covering playlists/likes/follow/lyrics in the browser; the Phase 2 player spec
-  updated for the new multi-section Home page and rerun 4× consecutively *without* resetting the database to confirm
-  no cross-run flakiness; and screenshots confirming synced-lyrics highlighting tracks real playback position.
-- Two genuine bugs were found and fixed during this process (not pre-existing, caught by testing): FFmpeg wrote
+- All 99 Python tests (5 + 13 + 7 + 13 + 9 + 52 across the six Python packages) and a clean `tsc --noEmit` pass
+  locally, outside Docker.
+- **Phase 3:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes, follows,
+  a collaborative playlist edited by a second account, reorder, recently-played ordering, made-for-you fallback); a
+  Playwright spec covering playlists/likes/follow/lyrics; the Phase 2 player spec updated for the new multi-section
+  Home page and rerun 4× consecutively *without* resetting the database to confirm no cross-run flakiness; screenshots
+  confirming synced-lyrics highlighting tracks real playback position.
+- **Phase 4:** the full events pipeline exercised via curl/Python against the live stack using a real uploaded track
+  (events → Redis Stream → the events consumer → Postgres → analytics endpoints, all independently confirmed); two new
+  Playwright specs (the client fires the right event with the right reason, confirmed via network interception; the
+  analytics page renders seeded top-tracks/skip-rate/listening-by-hour data correctly); all four e2e specs passing
+  together from a clean database; a screenshot that caught the bar-chart CSS bug above.
+- Four genuine bugs were found and fixed during this process (not pre-existing, caught by testing): FFmpeg wrote
   Windows-style backslash paths into generated HLS playlists (Phase 2); `0 or -1` duplicated a playlist's first track
-  position (Phase 3). Both described under "Key decisions" and covered by regression tests.
+  position (Phase 3); a UUID-as-string type mismatch and a CSS percentage-height bug (both Phase 4). All described
+  under "Key decisions" and covered by regression tests.
 
 ## Next
 
-Phase 4: client-side event logging (play_start/play_end/skip with reason) → Redis Streams → a consumer that writes to
-`play_events`, counting a "stream" only after 30 s of playback, plus a basic analytics page (top tracks, skip rate,
-listening by hour).
+Phase 5: a user × track implicit-feedback matrix (full listen +1, save +3, repeat +2, early skip −2) trained nightly
+with `implicit`'s ALS, a Discover-Weekly-style playlist (top-N nearest unplayed tracks, max 2 per artist), similar-tracks
+via cosine similarity, and a cold-start fallback (genre/popularity + `librosa` audio features) for new tracks.
