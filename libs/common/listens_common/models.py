@@ -13,11 +13,13 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -122,6 +124,10 @@ class Track(Base):
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lyrics: Mapped[str | None] = mapped_column(Text)  # plain unsynced lyrics (ID3 USLT / Vorbis LYRICS)
     lyrics_synced: Mapped[str | None] = mapped_column(Text)  # LRC text "[mm:ss.xx]line", from ID3 SYLT if present
+    # Cold-start audio features (librosa, extracted by the worker). Used to suggest "similar
+    # tracks" for a track with no listening history yet, i.e. no ALS vector (see Phase 5).
+    tempo_bpm: Mapped[float | None] = mapped_column(Float)
+    energy: Mapped[float | None] = mapped_column(Float)  # mean RMS amplitude, roughly "loudness/intensity"
     created_at: Mapped[datetime] = _created_at()
 
     artist: Mapped[Artist] = relationship(lazy="joined")
@@ -236,3 +242,27 @@ class PlayEvent(Base):
         Index("ix_play_events_user_time", "user_id", "occurred_at"),
         Index("ix_play_events_track_time", "track_id", "occurred_at"),
     )
+
+
+class UserVector(Base):
+    """A user's latent-factor vector from the nightly ALS training run (see services/recommender).
+    One row per user; retrained in place. Vectors are stored as JSON (a plain list[float]), not a
+    Postgres-specific ARRAY or a vector-DB extension, so the same schema runs on SQLite in tests
+    and nothing beyond a normal Postgres image is required to deploy this."""
+
+    __tablename__ = "user_vectors"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TrackVector(Base):
+    """A track's latent-factor vector from the same ALS run. Dot product with a UserVector gives
+    a recommendation score; cosine similarity between two TrackVectors gives "similar tracks"."""
+
+    __tablename__ = "track_vectors"
+
+    track_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

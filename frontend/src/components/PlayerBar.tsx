@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Cover from "@/components/Cover";
-import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, VolumeIcon } from "@/components/icons";
+import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, SimilarIcon, VolumeIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
 import QualitySelect from "@/components/QualitySelect";
 import { formatTime } from "@/lib/format";
@@ -61,6 +61,9 @@ export default function PlayerBar() {
             <button aria-label="Queue" data-testid="queue-toggle" onClick={() => p.setQueueOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
               <QueueIcon />
             </button>
+            <button aria-label="Similar tracks" data-testid="similar-toggle" onClick={() => p.setSimilarOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
+              <SimilarIcon />
+            </button>
           </div>
           <div className="hidden w-full items-center gap-2 font-mono text-xs tabular-nums text-muted md:flex">
             <span data-testid="time-current" className="w-10 text-right">{formatTime(p.currentTime)}</span>
@@ -100,6 +103,9 @@ export default function PlayerBar() {
           </button>
           <button aria-label="Queue" data-testid="queue-toggle-desktop" onClick={() => p.setQueueOpen(!p.queueOpen)} className={`flex size-9 items-center justify-center rounded-full hover:text-fg ${p.queueOpen ? "text-accent" : "text-muted"}`}>
             <QueueIcon />
+          </button>
+          <button aria-label="Similar tracks" data-testid="similar-toggle-desktop" onClick={() => p.setSimilarOpen(!p.similarOpen)} className={`flex size-9 items-center justify-center rounded-full hover:text-fg ${p.similarOpen ? "text-accent" : "text-muted"}`}>
+            <SimilarIcon />
           </button>
         </div>
       </div>

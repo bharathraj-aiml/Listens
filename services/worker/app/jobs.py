@@ -25,7 +25,7 @@ from listens_common.config import Settings
 from listens_common.models import Track
 from listens_common.storage import delete_prefix
 
-from . import transcode
+from . import audio_features, transcode
 
 log = logging.getLogger("worker")
 
@@ -81,10 +81,13 @@ def process_track(db: Session, s3, settings: Settings, track_id) -> str:
             cover_key = f"tracks/{track_id}.jpg"
             s3.upload_file(str(cover), settings.s3_bucket_covers, cover_key, ExtraArgs={"ContentType": "image/jpeg"})
 
+        features = audio_features.extract_features(src)
+
     db.execute(
         update(Track).where(Track.id == track_id).values(
             status="ready", hls_prefix=prefix, duration_ms=info.duration_ms,
             source_bitrate_kbps=info.bitrate_kbps, cover_key=cover_key, error=None,
+            tempo_bpm=features.get("tempo_bpm"), energy=features.get("energy"),
         )
     )
     db.commit()

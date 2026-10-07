@@ -13,24 +13,28 @@ the next starts.
   recently played, Home sections (recently played / made for you / new uploads), synced lyrics.
 - ✅ **Phase 4 – Event tracking:** play/skip events → Redis Streams → a consumer service, verified
   streams (30s threshold), and an analytics page (top tracks, skip rate, listening by hour).
-- ⏳ Phase 5 – recommendations (ALS collaborative filtering, Discover Weekly, similar tracks) — next.
+- ✅ **Phase 5 – Recommendations:** implicit-feedback ALS (nightly `recommender` service), ALS-ranked
+  "made for you" (max 2 per artist), "similar tracks" via vector cosine similarity, cold-start
+  fallback via `librosa` tempo/energy then same-artist/genre.
+- ⏳ Phase 6 – smart shuffle (artist-spreading shuffle vs. Fisher–Yates) — next.
 
 ## Layout
 
 ```
 .
-├── docker-compose.yml          # postgres, redis, minio, migrate, auth, catalogue, stream, worker, events, frontend, gateway
+├── docker-compose.yml          # postgres, redis, minio, migrate, auth, catalogue, stream, worker, events, recommender, frontend, gateway
 ├── .env.example                # copy to .env
 ├── gateway/nginx.conf          # single entry point (:8080): /api/auth, /api/catalogue, /api/stream, / -> web app
 ├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper
 │   └── tests/                  # migration-vs-models test, signing tests
-├── migrations/                 # Alembic: 0001 schema, 0002 catalogue + full-text (GIN), 0003 lyrics columns
+├── migrations/                 # Alembic: 0001 schema, 0002 catalogue + full-text (GIN), 0003 lyrics, 0004 audio features + vectors
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
-│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events ingest, analytics
+│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events ingest, analytics, recommendations
 │   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage
-│   ├── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art
-│   └── events/                  # Redis-Stream consumer: play/skip events -> play_events rows
+│   ├── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art + librosa audio features
+│   ├── events/                  # Redis-Stream consumer: play/skip events -> play_events rows
+│   └── recommender/              # scheduled job: builds the interaction matrix, trains ALS, writes user/track vectors
 ├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ Playwright e2e)
 └── scripts/import_folder.py    # bulk-import a music folder through the public API
 ```
@@ -89,21 +93,28 @@ the filename and "Unknown Artist". Budget disk for originals **plus** HLS (rough
 12. **Analytics:** play a track for 30+ seconds (check it against the Network tab: a `play_end` event with `ms_played >= 30000`
     fires on the next track change), then check the Analytics page — it should show up under *Top tracks*. Click Next on a
     track and confirm a `skip` event fires with `reason: "next_button"`. Skip rate needs at least 2 plays of a track to appear.
+13. **Similar tracks:** open the similar-tracks panel (sparkle icon next to the queue icon) on any playing track — it never
+    shows the track itself. Brand-new uploads with no listening history yet fall back to tempo/energy proximity, then
+    same-artist/genre, so the panel is never empty as long as *some* other ready track exists.
+14. **Made for you:** once `services/recommender` has trained at least once (immediately on stack startup, then every
+    `RECOMMENDER_TRAIN_INTERVAL_HOURS`), a user with enough listening history gets ALS-ranked picks, capped at 2 per
+    artist; everyone else still sees the Phase 3 heuristic/new-releases fallback — the section is never empty.
 
 
 ## Tests
 
 ```bash
 python -m venv .venv
-.venv\Scripts\pip install -e "libs/common[web,storage]" -r services/catalogue/requirements.txt pytest httpx fakeredis alembic "moto[server]"   # Windows
+.venv\Scripts\pip install -e "libs/common[web,storage]" -r services/catalogue/requirements.txt -r services/worker/requirements.txt -r services/recommender/requirements.txt pytest httpx fakeredis alembic "moto[server]"   # Windows
 # source .venv/bin/activate && pip install ...                                                                                                   # macOS/Linux
-# needs ffmpeg + ffprobe on PATH
+# needs ffmpeg + ffprobe on PATH; set OPENBLAS_NUM_THREADS=1 to avoid BLAS/thread-pool contention under pytest
 (cd libs/common        && pytest)   # signing + "migrations produce exactly the ORM schema"
 (cd services/auth      && pytest)
-(cd services/catalogue && pytest)   # upload, catalogue, search, playlists, likes, follows, lyrics, events, analytics
+(cd services/catalogue && pytest)   # upload, catalogue, search, playlists, likes, follows, lyrics, events, analytics, recommendations
 (cd services/stream    && pytest)   # signed URLs, path whitelist, expiry/tamper cases
-(cd services/worker    && pytest)   # real FFmpeg transcodes, retry/failed/sweep logic
+(cd services/worker    && pytest)   # real FFmpeg transcodes, retry/failed/sweep logic, librosa audio-feature extraction
 (cd services/events    && pytest)   # Redis Stream consumer: insert/retry/drop/sweep logic
+(cd services/recommender && pytest) # matrix weighting/clamping, ALS training + vector persistence, a block-structure correctness check
 
 # Postgres full-text search (incl. "planner really uses the GIN indexes" check) needs a real database:
 TEST_PG_URL=postgresql+psycopg2://user@localhost:5432/scratch_db  (cd services/catalogue && pytest tests/test_search_postgres.py)
@@ -172,6 +183,25 @@ and tags the outgoing track's closing event as `play_end` (natural completion, v
 explicit reason - `next_button` / `previous_button` / `track_select` - threaded through the player store by whichever
 action caused the change). A "stream" only counts for the Analytics page once `ms_played >= 30000`.
 
+**Recommendations.** `services/recommender` builds a weighted user×track interaction matrix from
+`play_events`/`likes`/`playlist_tracks` — a full listen (≥90% of duration) is +1, every repeat full
+listen beyond the first is an additional +2, a save (like or playlist-add) is +3, an early skip
+(<30s in) is −2, summed per pair and clamped to ≥0 (confidence-weighted implicit ALS needs
+non-negative input; a heavily-skipped track just contributes no positive signal rather than being
+fed as a literal negative). It trains `implicit`'s `AlternatingLeastSquares` on that matrix
+immediately on startup and every `RECOMMENDER_TRAIN_INTERVAL_HOURS` after (default 24h — "nightly"),
+storing the resulting user/track latent-factor vectors as plain JSON arrays (`user_vectors`,
+`track_vectors`) rather than a Postgres-specific `ARRAY` or a vector-DB extension, so the schema
+stays portable to SQLite in tests. `services/catalogue/app/recommendations.py` scores "made for
+you" as a dot product of a user's vector against every unplayed ready track's vector (capped at 2
+tracks per artist), falling back to the Phase 3 heuristic when a user has no vector yet; "similar
+tracks" is cosine similarity between two tracks' vectors, falling back to z-scored tempo/energy
+proximity (`services/worker/app/audio_features.py`, extracted via `librosa` at upload time) and
+then same-artist/genre for a track with no vector and no usable audio features. The ALS math
+itself — the confidence/preference split, the alternating-least-squares derivation, why it
+converges — is explained in detail in code comments in `services/recommender/app/train.py`, per
+the original spec's request to show the maths, not just use the library.
+
 ## Key decisions
 
 - **Tokens:** access JWT stateless (15 min); refresh JWT stateful in Redis, rotated on use (atomic `GETDEL`), revoked on logout.
@@ -194,6 +224,23 @@ action caused the change). A "stream" only counts for the Analytics page once `m
   content (`items-end`, no stretch), so a bar using `height: X%` had nothing to resolve against and silently rendered
   at 0px. Fixed to a computed pixel height. Caught only by looking at an actual screenshot - the e2e test checked the
   bars' `data-count` attributes, which were correct, not their rendered geometry, which wasn't.
+- **`libgomp.so.1` missing at runtime:** `implicit`'s compiled ALS extension is linked against OpenMP, which the
+  `python:3.12-slim` base image doesn't ship; `services/recommender` crash-looped on `import implicit.als` in the real
+  container even though every local/pytest run (run as a normal user with a differently-resolved environment) was fine.
+  Fixed by installing `libgomp1` via apt. Only surfaced once actually deployed via Docker — exactly why this phase's
+  plan called for a real container rebuild, not just local pytest, before calling it done.
+- **`numba` JIT caching needs a writable cache dir:** `librosa`'s internal `@jit(cache=True)` functions try to write
+  their compiled-code cache next to the source file in `site-packages` by default — not writable by the non-root `app`
+  user the worker container runs as, so every real upload failed audio-feature extraction with "cannot cache function:
+  no locator available" (silently, since extraction is deliberately non-fatal — it only showed up by checking
+  `tempo_bpm`/`energy` actually landed in Postgres after a real upload, not from any test or log scan). Fixed by
+  pointing `NUMBA_CACHE_DIR` at `/tmp`. Local pytest never caught this either, for the same root cause as the
+  `libgomp1` bug: it runs as a normal user with full write access to `site-packages`.
+- **A capped recommendation list can get "topped up" past its cap:** made-for-you's ALS path correctly capped results
+  to 2 tracks per artist, but the heuristic/new-releases fallback that fills remaining slots when ALS doesn't have
+  enough data didn't know about that cap, so a thin ALS result could end up right back over the limit. Fixed by
+  re-applying the cap once, after all three tiers (ALS, heuristic, fallback) are combined. Caught by a dedicated test
+  seeding one artist with more tracks than the cap allows.
 
 ## Verified
 
@@ -218,8 +265,8 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- All 99 Python tests (5 + 13 + 7 + 13 + 9 + 52 across the six Python packages) and a clean `tsc --noEmit` pass
-  locally, outside Docker.
+- All 117 Python tests (5 + 13 + 53 + 7 + 17 + 9 + 13 across the seven Python packages) and a clean `tsc --noEmit`/
+  `next build` pass locally, outside Docker.
 - **Phase 3:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes, follows,
   a collaborative playlist edited by a second account, reorder, recently-played ordering, made-for-you fallback); a
   Playwright spec covering playlists/likes/follow/lyrics; the Phase 2 player spec updated for the new multi-section
@@ -230,13 +277,26 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   Playwright specs (the client fires the right event with the right reason, confirmed via network interception; the
   analytics page renders seeded top-tracks/skip-rate/listening-by-hour data correctly); all four e2e specs passing
   together from a clean database; a screenshot that caught the bar-chart CSS bug above.
-- Four genuine bugs were found and fixed during this process (not pre-existing, caught by testing): FFmpeg wrote
-  Windows-style backslash paths into generated HLS playlists (Phase 2); `0 or -1` duplicated a playlist's first track
-  position (Phase 3); a UUID-as-string type mismatch and a CSS percentage-height bug (both Phase 4). All described
+- **Phase 5:** migration 0004 (audio-feature columns + vector tables) verified on both SQLite (models-equivalence
+  test) and real Postgres (upgrade → downgrade → upgrade cycle on a disposable container); a full clean rebuild from
+  zero (`docker compose down`, every project image deleted, all Docker build cache pruned, every image rebuilt with
+  `--no-cache`) — all 11 containers reach healthy/running including the new `recommender` service; a real upload
+  through the live gateway confirmed `tempo_bpm`/`energy` land in Postgres after the fix below; `recommender` logged
+  a real successful ALS training run against genuine accumulated interaction data; `/home/made-for-you` and
+  `/tracks/<id>/similar` exercised via curl against the live stack, both the ALS path and every cold-start fallback
+  tier; a new Playwright assertion opens the similar-tracks panel against the live stack and a screenshot confirms it
+  renders correctly. Two real bugs only reproduced inside the actual container (never in local pytest, which runs
+  under a different user/permissions model) — `libgomp.so.1` missing for `implicit`, and `numba`'s JIT cache needing
+  a writable directory for `librosa` — plus a made-for-you artist-cap leak caught by a dedicated test. All described
   under "Key decisions" and covered by regression tests.
+- Across all five phases, seven genuine bugs were found and fixed during this process (not pre-existing, caught by
+  testing): FFmpeg wrote Windows-style backslash paths into generated HLS playlists (Phase 2); `0 or -1` duplicated a
+  playlist's first track position (Phase 3); a UUID-as-string type mismatch and a CSS percentage-height bug (both
+  Phase 4); missing `libgomp.so.1`, a non-writable `numba` JIT cache directory, and a made-for-you artist-cap leak
+  (all Phase 5, all only caught by testing the real Docker container, not local pytest).
 
 ## Next
 
-Phase 5: a user × track implicit-feedback matrix (full listen +1, save +3, repeat +2, early skip −2) trained nightly
-with `implicit`'s ALS, a Discover-Weekly-style playlist (top-N nearest unplayed tracks, max 2 per artist), similar-tracks
-via cosine similarity, and a cold-start fallback (genre/popularity + `librosa` audio features) for new tracks.
+Phase 6: a smart-shuffle algorithm that spreads an artist's tracks out across a shuffled queue instead of plain
+Fisher–Yates (which can cluster the same artist back-to-back by chance), a small script measuring same-artist
+adjacency to show the difference is real, and an optional recommendation-injected "smart shuffle" mode.

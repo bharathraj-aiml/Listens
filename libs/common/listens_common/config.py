@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # "mp3" exists for environments whose browser build lacks AAC (e.g. open-source Chromium in CI).
     hls_audio_codec: str = "aac"
 
+    # Recommendations (Phase 5): how often services/recommender retrains the ALS model.
+    recommender_train_interval_hours: float = 24
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

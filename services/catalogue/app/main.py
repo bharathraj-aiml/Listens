@@ -15,6 +15,7 @@ from listens_common.models import Album, Artist, Follow, Track
 from listens_common.storage import delete_prefix, get_s3
 from listens_common.web import current_user_id, get_redis
 
+from . import recommendations
 from . import search as search_mod
 from .analytics import router as analytics_router
 from .events import router as events_router
@@ -221,6 +222,21 @@ def get_lyrics(
     if track.status != "ready" and track.uploader_id != user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
     return LyricsOut(lyrics=track.lyrics, lyrics_synced=track.lyrics_synced)
+
+
+@app.get("/tracks/{track_id}/similar", response_model=list[TrackOut])
+def get_similar_tracks(
+    track_id: uuid.UUID,
+    limit: int = Query(10, ge=1, le=50),
+    user_id: uuid.UUID = Depends(current_user_id),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[TrackOut]:
+    track = _get_track(db, track_id)
+    if track.status != "ready" and track.uploader_id != user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
+    picks = recommendations.similar_tracks(db, track, limit)
+    return [track_out(t, settings, user_id) for t in picks]
 
 
 @app.delete("/tracks/{track_id}", status_code=status.HTTP_204_NO_CONTENT)

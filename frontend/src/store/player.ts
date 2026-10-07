@@ -39,6 +39,7 @@ interface PlayerState {
   levels: number[]; // kbps renditions the current track offers (empty until its manifest loads)
   queueOpen: boolean;
   lyricsOpen: boolean;
+  similarOpen: boolean;
   seekRequest: { to: number; n: number } | null;
   /** Set by whichever store action caused the most recent track change, read (and cleared)
    *  by PlayerEngine to tag the outgoing track's analytics event as a "skip" with a reason,
@@ -60,6 +61,7 @@ interface PlayerState {
   setQuality: (q: Quality) => void;
   setQueueOpen: (open: boolean) => void;
   setLyricsOpen: (open: boolean) => void;
+  setSimilarOpen: (open: boolean) => void;
   // engine -> store
   setTime: (t: number) => void;
   setDuration: (d: number) => void;
@@ -82,6 +84,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   levels: [],
   queueOpen: false,
   lyricsOpen: false,
+  similarOpen: false,
   seekRequest: null,
   lastSkipReason: null,
 
@@ -135,9 +138,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ quality });
     savePrefs(get().volume, quality);
   },
-  // Mutually exclusive: both are fixed inset-y-0 side panels, so two open at once would overlap.
-  setQueueOpen: (queueOpen) => set({ queueOpen, lyricsOpen: queueOpen ? false : get().lyricsOpen }),
-  setLyricsOpen: (lyricsOpen) => set({ lyricsOpen, queueOpen: lyricsOpen ? false : get().queueOpen }),
+  // Mutually exclusive: all three are fixed inset-y-0 side panels, so more than one open at once would overlap.
+  setQueueOpen: (queueOpen) => set({ queueOpen, lyricsOpen: queueOpen ? false : get().lyricsOpen, similarOpen: queueOpen ? false : get().similarOpen }),
+  setLyricsOpen: (lyricsOpen) => set({ lyricsOpen, queueOpen: lyricsOpen ? false : get().queueOpen, similarOpen: lyricsOpen ? false : get().similarOpen }),
+  setSimilarOpen: (similarOpen) => set({ similarOpen, queueOpen: similarOpen ? false : get().queueOpen, lyricsOpen: similarOpen ? false : get().lyricsOpen }),
   setTime: (currentTime) => set({ currentTime }),
   setDuration: (duration) => set({ duration }),
   setBuffering: (buffering) => set({ buffering }),

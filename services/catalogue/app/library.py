@@ -21,6 +21,7 @@ from listens_common.db import get_db
 from listens_common.models import Artist, Follow, Like, PlayEvent, Playlist, PlaylistTrack, Track, User
 from listens_common.web import current_user_id, get_redis
 
+from . import recommendations
 from .events import publish_event
 from .schemas import (
     AddTrackIn, ArtistRef, PlaylistCreateIn, PlaylistDetailOut, PlaylistOut,
@@ -312,20 +313,26 @@ def made_for_you(
     limit: int = Query(20, ge=1, le=50), user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
 ) -> list[TrackOut]:
-    """Heuristic placeholder until Phase 5's ALS model: tracks by artists you've liked or
-    played, that you haven't already played. Falls back to newest-ready tracks when there's
-    not enough listening history yet, so new users never see an empty section."""
-    liked_artists = select(Track.artist_id).join(Like, Like.track_id == Track.id).where(Like.user_id == user_id)
-    played_artists = select(Track.artist_id).join(PlayEvent, PlayEvent.track_id == Track.id).where(PlayEvent.user_id == user_id)
+    """Scores tracks by the nightly ALS model (services/recommender) once a user has a trained
+    vector. Until then - or if ALS still can't fill the full page (a very sparse profile) -
+    falls back to a heuristic: tracks by artists you've liked or played, that you haven't
+    already played, then newest-ready tracks, so new users never see an empty section."""
+    picks = list(recommendations.als_made_for_you(db, user_id, limit) or [])
     played_tracks = select(PlayEvent.track_id).where(PlayEvent.user_id == user_id)
 
-    picks = list(db.scalars(
-        select(Track).where(
-            Track.status == "ready",
-            Track.artist_id.in_(liked_artists.union(played_artists)),
-            Track.id.not_in(played_tracks),
-        ).order_by(func.random()).limit(limit)
-    ).unique())
+    if len(picks) < limit:
+        have = {t.id for t in picks}
+        liked_artists = select(Track.artist_id).join(Like, Like.track_id == Track.id).where(Like.user_id == user_id)
+        played_artists = select(Track.artist_id).join(PlayEvent, PlayEvent.track_id == Track.id).where(PlayEvent.user_id == user_id)
+        heuristic = db.scalars(
+            select(Track).where(
+                Track.status == "ready",
+                Track.artist_id.in_(liked_artists.union(played_artists)),
+                Track.id.not_in(played_tracks),
+                Track.id.not_in(have),
+            ).order_by(func.random()).limit(limit - len(picks))
+        ).unique()
+        picks += [t for t in heuristic if t.id not in have]
 
     if len(picks) < limit:
         have = {t.id for t in picks}
@@ -335,4 +342,7 @@ def made_for_you(
         ).unique()
         picks += [t for t in fallback if t.id not in have]
 
+    # Re-apply the cap: the heuristic/new-release fill-in above doesn't know about it, so
+    # without this a thin ALS result could get "topped up" past 2-per-artist by either of them.
+    picks = recommendations.cap_per_artist(picks)
     return [track_out(t, settings, user_id) for t in picks]

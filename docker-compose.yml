@@ -159,6 +159,21 @@ services:
       redis:
         condition: service_healthy
 
+  # Nightly-ish ALS training (see services/recommender/app/train.py): reads play_events/likes/
+  # playlist_tracks straight from Postgres and writes user_vectors/track_vectors. No Redis
+  # stream and no MinIO needed - it's a scheduled batch job over the DB, not a request handler.
+  recommender:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/recommender/Dockerfile
+    environment:
+      <<: *python-env
+      RECOMMENDER_TRAIN_INTERVAL_HOURS: ${RECOMMENDER_TRAIN_INTERVAL_HOURS:-24}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   frontend:
     restart: unless-stopped
     build:

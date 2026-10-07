@@ -139,6 +139,22 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await page.getByRole("button", { name: "Close queue" }).click();
   await expect(page.getByTestId("audio")).toHaveJSProperty("paused", false);
 
+  // --- similar tracks (Phase 5) ---------------------------------------------------------------------------------
+  // Neither A nor B has an ALS vector yet (no play history old enough to train on), so this exercises
+  // the cold-start fallback (tempo/energy proximity, or same-artist/genre). The dev stack's Postgres
+  // volume accumulates "ready" tracks with audio features across every past test run, so this can't
+  // assert an exact fallback tier or count - only that the panel works and never shows the track
+  // it was opened from.
+  await page.getByTestId("similar-toggle-desktop").click();
+  const similarPanel = page.getByTestId("similar-panel");
+  await expect(similarPanel).toBeVisible();
+  const similarRows = similarPanel.getByTestId("track-row");
+  await expect(similarRows.first()).toBeVisible({ timeout: 15_000 });
+  expect(await similarRows.count()).toBeGreaterThan(0);
+  await expect(similarRows.filter({ hasText: B })).toHaveCount(0); // never recommends the track itself
+  await page.getByRole("button", { name: "Close similar tracks" }).click();
+  await expect(similarPanel).toHaveCount(0);
+
   // --- persistent mini-player across navigation ----------------------------------------------------------------
   const t0 = await seconds(page);
   await page.getByRole("link", { name: "Search" }).first().click();

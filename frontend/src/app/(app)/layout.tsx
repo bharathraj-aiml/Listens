@@ -7,6 +7,7 @@ import PlayerBar from "@/components/PlayerBar";
 import PlayerEngine from "@/components/PlayerEngine";
 import QueuePanel from "@/components/QueuePanel";
 import Sidebar from "@/components/Sidebar";
+import SimilarTracksPanel from "@/components/SimilarTracksPanel";
 import { get } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { useAuth } from "@/store/auth";
@@ -41,6 +42,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <PlayerBar />
       <QueuePanel />
       <LyricsPanel />
+      <SimilarTracksPanel />
       <PlayerEngine />
     </div>
   );

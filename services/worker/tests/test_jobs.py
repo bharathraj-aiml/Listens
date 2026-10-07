@@ -21,6 +21,7 @@ def test_process_track_end_to_end(env):
     assert t.status == "ready" and t.error is None
     assert 7500 <= t.duration_ms <= 8600 and t.source_bitrate_kbps == 192
     assert t.hls_prefix == f"hls/{tid}" and t.cover_key == f"tracks/{tid}.jpg"
+    assert t.energy is not None and t.energy > 0  # cold-start features extracted during processing
     got = keys(env, prefix=f"hls/{tid}/")
     assert f"hls/{tid}/master.m3u8" in got and f"hls/{tid}/q96/index.m3u8" in got
     assert f"hls/{tid}/q160/seg_001.ts" in got

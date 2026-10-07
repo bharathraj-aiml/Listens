@@ -1,6 +1,6 @@
 import {
   CaretDown, CaretUp, ChartBar, Heart, House, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus, Queue,
-  SkipBack, SkipForward, SpeakerHigh, SpeakerX, TextAlignLeft, Trash, UploadSimple, X,
+  SkipBack, SkipForward, Sparkle, SpeakerHigh, SpeakerX, TextAlignLeft, Trash, UploadSimple, X,
   type Icon, type IconProps,
 } from "@phosphor-icons/react";
 
@@ -32,3 +32,4 @@ export const TrashIcon = wrap(Trash);
 export const CaretUpIcon = wrap(CaretUp);
 export const CaretDownIcon = wrap(CaretDown);
 export const AnalyticsIcon = wrap(ChartBar);
+export const SimilarIcon = wrap(Sparkle);
