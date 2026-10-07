@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { HomeIcon, PlaylistIcon, SearchIcon, UploadIcon } from "@/components/icons";
+import { AnalyticsIcon, HomeIcon, PlaylistIcon, SearchIcon, UploadIcon } from "@/components/icons";
 import { Logo } from "@/components/Logo";
 import { post } from "@/lib/api";
 import { useAuth } from "@/store/auth";
@@ -13,6 +13,7 @@ const NAV = [
   { href: "/search", label: "Search", Icon: SearchIcon },
   { href: "/playlists", label: "Playlists", Icon: PlaylistIcon },
   { href: "/upload", label: "Upload", Icon: UploadIcon },
+  { href: "/analytics", label: "Analytics", Icon: AnalyticsIcon },
 ];
 
 export default function Sidebar() {

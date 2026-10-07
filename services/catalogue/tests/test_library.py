@@ -10,6 +10,18 @@ def h(env):
     return env.headers
 
 
+def record_play(env, user_id, track_id, occurred_at=None):
+    """Play events now arrive via POST /events -> Redis Stream -> the events service (tested
+    separately in services/events/), not a direct write here - so these tests insert the row
+    the consumer would have written, to exercise the read side (recently-played, made-for-you)
+    in isolation. Takes an explicit `occurred_at` so ordering tests aren't at the mercy of
+    how many microseconds apart two real `datetime.now()` calls land."""
+    with env.sessions() as db:
+        db.add(PlayEvent(user_id=user_id, track_id=uuid.UUID(str(track_id)), event_type="play_start",
+                         occurred_at=occurred_at or datetime.now(UTC)))
+        db.commit()
+
+
 def test_playlist_crud_and_visibility(env):
     r = env.client.post("/playlists", json={"name": "Road Trip", "description": "Hits", "is_public": False}, headers=h(env))
     assert r.status_code == 201, r.text
@@ -154,17 +166,17 @@ def test_follow_user_cannot_follow_self(env):
     assert env.client.get("/follows/users", headers=h(env)).json() == []
 
 
-def test_record_play_and_recently_played_ordering(env):
+def test_recently_played_ordering(env):
     t1, *_ = seed(env, "Old play")
     t2, *_ = seed(env, "New play")
-    assert env.client.post("/plays", json={"track_id": t1}, headers=h(env)).status_code == 204
-    assert env.client.post("/plays", json={"track_id": t2}, headers=h(env)).status_code == 204
+    base = datetime.now(UTC)
+    record_play(env, env.user_id, t1, base)
+    record_play(env, env.user_id, t2, base + timedelta(seconds=1))
     # replaying t1 should bump it to the front (most-recent wins, not first-played)
-    env.client.post("/plays", json={"track_id": t1}, headers=h(env))
+    record_play(env, env.user_id, t1, base + timedelta(seconds=2))
 
     titles = [t["title"] for t in env.client.get("/home/recently-played", headers=h(env)).json()]
     assert titles == ["Old play", "New play"]
-    assert env.client.post("/plays", json={"track_id": str(uuid.uuid4())}, headers=h(env)).status_code == 404
 
     # another user's plays don't show up for this user
     assert env.client.get("/home/recently-played", headers=env.other_headers).json() == []
@@ -176,7 +188,7 @@ def test_made_for_you_prefers_liked_and_played_artists_and_excludes_already_play
     unrelated, *_ = seed(env, "Unrelated", artist="Stranger Co")
 
     env.client.post(f"/likes/{liked_track}", headers=h(env))
-    env.client.post("/plays", json={"track_id": liked_track}, headers=h(env))  # already played -> excluded
+    record_play(env, env.user_id, liked_track)  # already played -> excluded
 
     picks = env.client.get("/home/made-for-you", headers=h(env)).json()
     titles = {p["title"] for p in picks}

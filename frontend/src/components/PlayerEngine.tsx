@@ -2,9 +2,17 @@
 
 import Hls, { type Level } from "hls.js";
 import { useEffect, useRef } from "react";
-import { post } from "@/lib/api";
+import { recordEvent } from "@/lib/events";
 import { getStreamUrl, invalidateStreamUrl, prefetchTrack } from "@/lib/stream";
 import { currentTrack, hydratePlayerPrefs, type Quality, usePlayer } from "@/store/player";
+
+interface PlaySession {
+  trackId: string;
+  accumulatedMs: number; // actively-playing time, not wall-clock time (paused/seeking don't count)
+  lastMediaTime: number; // audio.currentTime as of the last tick, to compute the next delta
+  lastKnownPositionMs: number; // for a skip event's position_ms
+  endedNaturally: boolean; // set by the 'ended' handler; distinguishes play_end from skip
+}
 
 /** Rendition bitrate in kbps. We read it from the variant URL (".../q160/index.m3u8") because the
  *  BANDWIDTH attribute includes container overhead (e.g. 175 000 for a "160k" stream). */
@@ -42,6 +50,8 @@ export default function PlayerEngine() {
   const switching = useRef(false); // ignore the <audio> 'pause' events caused by swapping sources
   const pendingSeek = useRef<number | null>(null);
   const lastPositionState = useRef(0);
+  const session = useRef<PlaySession | null>(null);
+  const prevTrackId = useRef<string | null>(null);
 
   const track = usePlayer(currentTrack);
   const nextTrack = usePlayer((s) => s.queue[s.index + 1] ?? null);
@@ -60,6 +70,16 @@ export default function PlayerEngine() {
     const handlers: Record<string, () => void> = {
       timeupdate: () => {
         st().setTime(audio.currentTime);
+        const s = session.current;
+        if (s) {
+          // Only count time that was actually spent playing: clamp the per-tick delta so a
+          // seek (which can jump currentTime by minutes in one tick) can't be counted as
+          // "played". A paused tick still updates lastMediaTime so resuming doesn't produce
+          // one huge catch-up delta.
+          if (!audio.paused) s.accumulatedMs += Math.max(0, Math.min(audio.currentTime - s.lastMediaTime, 1.5)) * 1000;
+          s.lastMediaTime = audio.currentTime;
+          s.lastKnownPositionMs = Math.round(audio.currentTime * 1000);
+        }
         const now = Date.now();
         if (now - lastPositionState.current > 1000 && "mediaSession" in navigator && Number.isFinite(audio.duration)) {
           lastPositionState.current = now;
@@ -96,7 +116,10 @@ export default function PlayerEngine() {
       play: () => {
         if (!st().playing) st().setPlaying(true);
       },
-      ended: () => st().next(),
+      ended: () => {
+        if (session.current) session.current.endedNaturally = true;
+        st().next();
+      },
       error: () => {
         switching.current = false;
         if (audio.src) st().setError("Couldn't play this track.");
@@ -195,10 +218,30 @@ export default function PlayerEngine() {
     };
   }, [track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- record the play for "recently played" (fire-and-forget; Phase 4 adds verified-stream counting) ---
+  // --- event lifecycle: close out the outgoing track (play_end or skip), open the next one -------------
+  // play_start drives "recently played"; play_end with ms_played >= 30s drives "top tracks" and
+  // skip rate (see services/catalogue/app/analytics.py). Whether the outgoing track's close event
+  // is "play_end" or "skip" is decided by session.endedNaturally, set by the 'ended' handler above;
+  // the skip *reason* comes from the store (set by next()/prev()/jumpTo()/playQueue()/removeAt()).
   useEffect(() => {
-    if (!track) return;
-    post("/api/catalogue/plays", { track_id: track.id }).catch(() => {});
+    const prev = prevTrackId.current;
+    const closing = session.current;
+    if (prev && closing && closing.trackId === prev) {
+      if (closing.endedNaturally) {
+        recordEvent({ event_type: "play_end", track_id: prev, ms_played: Math.round(closing.accumulatedMs) });
+      } else {
+        const reason = usePlayer.getState().lastSkipReason ?? "track_select";
+        recordEvent({ event_type: "skip", track_id: prev, position_ms: closing.lastKnownPositionMs, reason });
+      }
+    }
+    if (track) {
+      session.current = { trackId: track.id, accumulatedMs: 0, lastMediaTime: 0, lastKnownPositionMs: 0, endedNaturally: false };
+      recordEvent({ event_type: "play_start", track_id: track.id });
+    } else {
+      session.current = null;
+    }
+    prevTrackId.current = track?.id ?? null;
+    usePlayer.setState({ lastSkipReason: null }); // consumed; the next transition starts clean
   }, [track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- play/pause intent ----------------------------------------------------------------------

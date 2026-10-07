@@ -1,4 +1,4 @@
-# Shadow Listens - Phase 2 stack: data stores, migrations, auth/catalogue/stream/worker, web app, gateway.
+# Shadow Listens - Phase 4 stack: data stores, migrations, auth/catalogue/stream/worker/events, web app, gateway.
 # Start: cp .env.example .env && docker compose up --build
 name: shadow-listens
 
@@ -143,6 +143,20 @@ services:
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+
+  # Consumes jobs:events (play_start/play_end/skip/like/add_to_playlist) -> play_events rows.
+  # Scale with `--scale events=N` the same way as the transcode worker.
+  events:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/events/Dockerfile
+    environment: *python-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
 
   frontend:

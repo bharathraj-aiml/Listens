@@ -16,6 +16,8 @@ from listens_common.storage import delete_prefix, get_s3
 from listens_common.web import current_user_id, get_redis
 
 from . import search as search_mod
+from .analytics import router as analytics_router
+from .events import router as events_router
 from .library import router as library_router
 from .schemas import (
     AlbumDetail, AlbumHit, AlbumRef, ArtistDetail, ArtistRef, LyricsOut, PlaylistHit, SearchOut, TrackOut, UploadOut,
@@ -34,6 +36,8 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(library_router)
+app.include_router(events_router)
+app.include_router(analytics_router)
 
 TRANSCODE_STREAM = "jobs:transcode"
 ALLOWED_EXT = {".mp3", ".flac", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac"}

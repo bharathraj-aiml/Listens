@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from redis import Redis
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -18,10 +19,11 @@ from sqlalchemy.orm import Session
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
 from listens_common.models import Artist, Follow, Like, PlayEvent, Playlist, PlaylistTrack, Track, User
-from listens_common.web import current_user_id
+from listens_common.web import current_user_id, get_redis
 
+from .events import publish_event
 from .schemas import (
-    AddTrackIn, ArtistRef, PlayIn, PlaylistCreateIn, PlaylistDetailOut, PlaylistOut,
+    AddTrackIn, ArtistRef, PlaylistCreateIn, PlaylistDetailOut, PlaylistOut,
     PlaylistTrackOut, PlaylistUpdateIn, ReorderIn, TrackOut, UserRef,
 )
 from .serialize import track_out
@@ -134,7 +136,7 @@ def delete_playlist(playlist_id: uuid.UUID, user_id: uuid.UUID = Depends(current
 @router.post("/playlists/{playlist_id}/tracks", response_model=PlaylistTrackOut, status_code=status.HTTP_201_CREATED)
 def add_track(
     playlist_id: uuid.UUID, body: AddTrackIn, user_id: uuid.UUID = Depends(current_user_id),
-    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings), r: Redis = Depends(get_redis),
 ) -> PlaylistTrackOut:
     p = _get_editable_playlist(db, playlist_id, user_id)
     track = db.get(Track, body.track_id)
@@ -149,6 +151,7 @@ def add_track(
     db.add(p)
     db.commit()
     db.refresh(pt)
+    publish_event(r, event_type="add_to_playlist", user_id=user_id, track_id=track.id)
     return PlaylistTrackOut(id=pt.id, position=pt.position, added_by=pt.added_by, added_at=pt.added_at,
                             track=track_out(track, settings, user_id))
 
@@ -199,13 +202,17 @@ def move_track(
 # ---------------------------------------------------------------- likes
 
 @router.post("/likes/{track_id}", status_code=status.HTTP_204_NO_CONTENT)
-def like_track(track_id: uuid.UUID, user_id: uuid.UUID = Depends(current_user_id), db: Session = Depends(get_db)) -> None:
+def like_track(
+    track_id: uuid.UUID, user_id: uuid.UUID = Depends(current_user_id),
+    db: Session = Depends(get_db), r: Redis = Depends(get_redis),
+) -> None:
     track = db.get(Track, track_id)
     if track is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
     if db.get(Like, (user_id, track_id)) is None:  # idempotent: liking twice is a no-op, not a conflict
         db.add(Like(user_id=user_id, track_id=track_id))
         db.commit()
+        publish_event(r, event_type="like", user_id=user_id, track_id=track_id)
 
 
 @router.delete("/likes/{track_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -283,15 +290,9 @@ def list_followed_users(user_id: uuid.UUID = Depends(current_user_id), db: Sessi
     return [UserRef(id=u.id, username=u.username, display_name=u.display_name) for u in rows]
 
 
-# ---------------------------------------------------------------- plays / home sections
-
-@router.post("/plays", status_code=status.HTTP_204_NO_CONTENT)
-def record_play(body: PlayIn, user_id: uuid.UUID = Depends(current_user_id), db: Session = Depends(get_db)) -> None:
-    if db.get(Track, body.track_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
-    db.add(PlayEvent(user_id=user_id, track_id=body.track_id, event_type="play_start", occurred_at=datetime.now(UTC)))
-    db.commit()
-
+# ---------------------------------------------------------------- home sections
+# Play events (play_start/play_end/skip) now arrive via POST /events -> Redis Stream -> the
+# events service, not a direct write here (see events.py). These read queries are unchanged.
 
 @router.get("/home/recently-played", response_model=list[TrackOut])
 def recently_played(

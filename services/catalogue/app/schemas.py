@@ -126,9 +126,3 @@ class AddTrackIn(BaseModel):
 
 class ReorderIn(BaseModel):
     to_index: int = Field(ge=0)
-
-
-# ---------------------------------------------------------------- likes / follows / plays
-
-class PlayIn(BaseModel):
-    track_id: uuid.UUID

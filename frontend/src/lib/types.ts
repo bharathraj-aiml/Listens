@@ -73,3 +73,20 @@ export interface Lyrics {
   lyrics: string | null;
   lyrics_synced: string | null;
 }
+
+export interface TopTrack {
+  track: Track;
+  stream_count: number;
+}
+
+export interface SkipRateEntry {
+  track: Track;
+  play_count: number;
+  skip_count: number;
+  skip_rate: number;
+}
+
+export interface HourBucket {
+  hour: number;
+  count: number;
+}
