@@ -9,7 +9,9 @@ the next starts.
   (JWT access + rotating refresh tokens), API gateway.
 - ✅ **Phase 2 – Catalogue & streaming:** upload → MinIO → FFmpeg → HLS (96/160/320 kbps), signed
   short-lived stream URLs, web player (queue, seek, volume, quality, prefetch, persistent mini-player), full-text search.
-- ⏳ Phase 3 – library & social (playlists, likes, follows, recently played, Home sections) — next.
+- ✅ **Phase 3 – Library & social:** playlists (CRUD, reorder, collaborative), likes, follows,
+  recently played, Home sections (recently played / made for you / new uploads), synced lyrics.
+- ⏳ Phase 4 – event tracking (verified-stream counting, skip reasons, analytics page) — next.
 
 ## Layout
 
@@ -20,10 +22,10 @@ the next starts.
 ├── gateway/nginx.conf          # single entry point (:8080): /api/auth, /api/catalogue, /api/stream, / -> web app
 ├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper
 │   └── tests/                  # migration-vs-models test, signing tests
-├── migrations/                 # Alembic: 0001 schema, 0002 catalogue columns + full-text (GIN) indexes
+├── migrations/                 # Alembic: 0001 schema, 0002 catalogue + full-text (GIN), 0003 lyrics columns
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
-│   ├── catalogue/               # upload, tracks, artists, albums, search
+│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home
 │   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage
 │   └── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art
 ├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ Playwright e2e)
@@ -72,6 +74,15 @@ the filename and "Unknown Artist". Budget disk for originals **plus** HLS (rough
 5. **Search:** prefix + multi-word, case-insensitive; matching an artist name returns that artist's tracks.
 6. **Streaming security:** in dev-tools copy a segment URL; change one character of the token → 403; wait past expiry → 403.
    `POST /api/stream/tracks/<id>/url` without a token → 401.
+7. **Likes:** heart a track from any list or the player bar; it stays highlighted after a reload.
+8. **Playlists:** create one, add tracks (from a track row's playlist icon), reorder with the up/down arrows, rename, make it
+   public/collaborative, and — from a second account — confirm you can add/reorder tracks on a collaborative playlist but
+   can't rename or delete it. Delete it from the owner account.
+9. **Follow:** on an artist page, Follow/Following toggles and persists.
+10. **Home sections:** Recently played (after you've played something), Made for you (never empty, even for a brand-new
+    account — it falls back to new releases), New uploads.
+11. **Lyrics:** open the lyrics panel (text icon next to the queue icon) on any track. Most files show "No lyrics available"
+    unless they have embedded ID3 `USLT`/`SYLT` tags (or Vorbis/MP4 equivalents) — see the note under "How it works".
 
 ## Tests
 
@@ -127,6 +138,20 @@ track's URL, playlists and first segment are prefetched into the HTTP cache ~3 s
 **Search.** Postgres `to_tsvector('simple', …) @@ to_tsquery('daft:* & pu:*')` over tracks, artists, albums and playlists
 (public + your own), backed by expression GIN indexes (migration 0002) and ranked with `ts_rank`.
 
+**Library & social.** Playlists, likes, follows and `play_events` are all Phase-1 tables; Phase 3 is purely new endpoints
+over them (`services/catalogue/app/library.py`), no new microservice. A playlist is visible to everyone if `is_public`,
+otherwise only to its owner; any authenticated user can add/remove/reorder tracks on an `is_collaborative` playlist (there's
+no per-playlist member list — "collaborative" means "anyone with an account on this server"). Reordering renumbers the whole
+list by position, which is fine at personal-playlist sizes. "Made for you" is a heuristic (liked/played artists, excluding
+already-played tracks, falling back to newest releases so it's never empty) — real ALS recommendations are Phase 5.
+
+**Lyrics.** Read at upload time with `mutagen`: ID3 `USLT` (plain) and `SYLT` (time-synced, converted to LRC
+`[mm:ss.xx]text` lines; only millisecond-based `SYLT` timing can be converted — frame-based timing is skipped, not
+guessed), or the equivalent Vorbis/MP4 tags as a fallback. Served on demand via `GET /tracks/<id>/lyrics` rather than
+embedded in every track response. The player's Lyrics panel highlights the current synced line against playback position.
+**Most files won't have any of this** — checked across the 160 real MP3s used for Phase 2 testing, zero had embedded
+lyrics in any common frame, so expect "No lyrics available" unless a file was tagged with a tool that writes `USLT`/`SYLT`.
+
 ## Key decisions
 
 - **Tokens:** access JWT stateless (15 min); refresh JWT stateful in Redis, rotated on use (atomic `GETDEL`), revoked on logout.
@@ -138,11 +163,14 @@ track's URL, playlists and first segment are prefetched into the HTTP cache ~3 s
   on Windows wrote literal backslashes into the generated `.m3u8` playlist text (`q96\index.m3u8`), which breaks every
   HLS player since segment references are URLs. Fixed in `services/worker/app/transcode.py`; harmless on Linux too.
 - **MinIO image swap** (see note above) — a real-world infra surprise, not a design choice.
+- **Python's `0 or -1` falsy-zero trap:** the first track added to a playlist (position 0) was getting duplicated at
+  position 0 again, because `(max_position or -1) + 1` treats a real `0` the same as "no rows yet". Fixed to an explicit
+  `is None` check; covered by a regression test.
 
 ## Verified
 
-This was run for real, twice over: once rebuilding Phase 1 from scratch, and again for Phase 2 — on actual Docker Desktop
-(Windows), not a simulated or sandboxed substitute.
+This was run for real, three times over: rebuilding Phase 1 from scratch, Phase 2, and Phase 3 — on actual Docker
+Desktop (Windows), not a simulated or sandboxed substitute.
 
 - `docker compose up --build`: all 9 containers reach healthy/running.
 - Full upload → transcode → stream pipeline exercised via curl against the live gateway: register, upload (tags read
@@ -162,13 +190,19 @@ This was run for real, twice over: once rebuilding Phase 1 from scratch, and aga
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- All 55 Python tests (5 + 13 + 7 + 13 + 17 across the five Python packages) and a clean `tsc --noEmit` pass locally,
-  outside Docker.
-- One genuine bug was found and fixed during this process (not pre-existing, caught by testing on Windows): FFmpeg wrote
-  Windows-style backslash paths into generated HLS playlists, which would break playback in any browser. See "Key
-  decisions" above.
+- All 75 Python tests (5 + 13 + 7 + 13 + 37 across the five Python packages, including the Phase 3 playlist/likes/
+  follows/plays/lyrics suite) and a clean `tsc --noEmit` pass locally, outside Docker.
+- **Phase 3 specifically:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes,
+  follows, a collaborative playlist edited by a second account, reorder, recently-played ordering, made-for-you
+  fallback); a new Playwright spec covering playlists/likes/follow/lyrics in the browser; the Phase 2 player spec
+  updated for the new multi-section Home page and rerun 4× consecutively *without* resetting the database to confirm
+  no cross-run flakiness; and screenshots confirming synced-lyrics highlighting tracks real playback position.
+- Two genuine bugs were found and fixed during this process (not pre-existing, caught by testing): FFmpeg wrote
+  Windows-style backslash paths into generated HLS playlists (Phase 2); `0 or -1` duplicated a playlist's first track
+  position (Phase 3). Both described under "Key decisions" and covered by regression tests.
 
 ## Next
 
-Phase 3: playlists (create/edit/reorder/delete, collaborative), likes, follows (artists/users), recently played,
-and a Home page with recently-played / made-for-you / new-releases sections.
+Phase 4: client-side event logging (play_start/play_end/skip with reason) → Redis Streams → a consumer that writes to
+`play_events`, counting a "stream" only after 30 s of playback, plus a basic analytics page (top tracks, skip rate,
+listening by hour).
