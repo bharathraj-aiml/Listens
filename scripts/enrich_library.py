@@ -38,37 +38,42 @@ from listens_common.musicmeta import MusicMeta  # noqa: E402
 from listens_common.storage import get_s3  # noqa: E402
 
 
-def enrich_artists(db, apply: bool, refresh: bool, limit: int | None) -> None:
+def enrich_artists(Session, apply: bool, refresh: bool, limit: int | None) -> None:
+    """Takes a sessionmaker, not a session: the lookups wait minutes on the network, and Neon drops a
+    connection that sits idle that long ("server closed the connection unexpectedly"). So the database
+    is only touched in short bursts: one read up front, then one short write per artist."""
     meta = MusicMeta()
-    done = {m.artist_id for m in db.scalars(select(ArtistMeta))}
-    artists = [a for a in db.scalars(select(Artist).order_by(Artist.name)) if refresh or a.id not in done]
+    with Session() as db:
+        done = {m.artist_id for m in db.scalars(select(ArtistMeta))}
+        artists = [(a.id, a.name) for a in db.scalars(select(Artist).order_by(Artist.name)) if refresh or a.id not in done]
     if limit:
         artists = artists[:limit]
     print(f"{len(artists)} artist(s) to look up" + ("" if apply else "  [dry run: nothing is saved]"))
 
     matched = 0
-    for n, artist in enumerate(artists, 1):
+    for n, (artist_id, artist_name) in enumerate(artists, 1):
         try:
-            found = meta.resolve(artist.name)
+            found = meta.resolve(artist_name)
         except Exception as e:  # noqa: BLE001 - one bad lookup must not stop the run
-            print(f"[{n}/{len(artists)}] {artist.name}: lookup failed ({e}), skipped")
+            print(f"[{n}/{len(artists)}] {artist_name}: lookup failed ({e}), skipped")
             continue
         if not found:
-            print(f"[{n}/{len(artists)}] {artist.name}: no named artist found on MusicBrainz, skipped")
+            print(f"[{n}/{len(artists)}] {artist_name}: no named artist found on MusicBrainz, skipped")
             continue
         matched += 1
         who = ", ".join(p["name"] for p in found["parts"])
         top = ", ".join(s["name"] for s in found["similar"][:4]) or "none found"
-        print(f"[{n}/{len(artists)}] {artist.name} -> {who}: {len(found['tags'])} tags, {len(found['similar'])} similar (top: {top})")
+        print(f"[{n}/{len(artists)}] {artist_name} -> {who}: {len(found['tags'])} tags, {len(found['similar'])} similar (top: {top})")
         if not apply:
             continue
         # a joint credit keeps each named person's id as a {"self": true} entry so the recommender
         # can tell that "A.R. Rahman/Hariharan" and a "Hariharan" track are the same person
         similar = [*found["similar"], *({"mbid": p["mbid"], "name": p["name"], "score": 0, "self": True} for p in found["parts"])]
-        row = db.get(ArtistMeta, artist.id) or ArtistMeta(artist_id=artist.id)
-        row.mbid, row.tags, row.similar, row.fetched_at = found["mbid"], found["tags"], similar, datetime.now(UTC)
-        db.merge(row)
-        db.commit()
+        with Session() as db:
+            row = db.get(ArtistMeta, artist_id) or ArtistMeta(artist_id=artist_id)
+            row.mbid, row.tags, row.similar, row.fetched_at = found["mbid"], found["tags"], similar, datetime.now(UTC)
+            db.merge(row)
+            db.commit()
     print(f"matched {matched} of {len(artists)} artist credits")
 
 
@@ -109,13 +114,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="write to the database (default is a dry run)")
     ap.add_argument("--audio", action="store_true", help="also back-fill audio fingerprints for existing tracks")
+    ap.add_argument("--only-audio", action="store_true", help="back-fill audio fingerprints only (skip the artist lookups)")
     ap.add_argument("--refresh", action="store_true", help="re-fetch artists that already have data")
     ap.add_argument("--limit", type=int, help="process at most N artists / tracks")
     args = ap.parse_args()
 
-    with get_sessionmaker()() as db:
-        enrich_artists(db, args.apply, args.refresh, args.limit)
-        if args.audio:
+    Session = get_sessionmaker()
+    if not args.only_audio:
+        enrich_artists(Session, args.apply, args.refresh, args.limit)
+    if args.audio or args.only_audio:
+        with Session() as db:
             backfill_audio(db, args.apply, args.limit)
 
 

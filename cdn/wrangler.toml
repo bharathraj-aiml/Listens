@@ -1,0 +1,36 @@
+# Cloudflare cache in front of the private Backblaze B2 buckets (see src/index.ts).
+# Separate from ../wrangler.toml, which is the site-proxy Worker "shadow-listens".
+name = "shadow-listens-cdn"
+main = "src/index.ts"
+compatibility_date = "2026-10-11"
+
+# Workers Caching belongs to the Worker, not to a domain, so it works on the free *.workers.dev
+# address (the Cache API does not). Responses are keyed by the path only, never by the signed token.
+# Files are immutable (a new upload gets a new track id), so a cache that survives deploys is safe.
+[cache]
+enabled = true
+cross_version_cache = true
+
+# The default entrypoint authenticates every request, so it must always run: never cached.
+[exports.default]
+type = "worker"
+[exports.default.cache]
+enabled = false
+
+# The Storage entrypoint is the cached one: a hit never reaches Backblaze.
+[exports.Storage]
+type = "worker"
+[exports.Storage.cache]
+enabled = true
+
+[vars]
+S3_ENDPOINT_URL = "https://s3.eu-central-003.backblazeb2.com"
+S3_REGION = "eu-central-003"
+S3_BUCKET_AUDIO = "Shadow-listens-audio"
+S3_BUCKET_COVERS = "Shadow-listens-covers"
+# Pages allowed to load audio and covers from this Worker (browser CORS).
+ALLOWED_ORIGINS = "https://shadow-listens.shadow-listens.workers.dev,https://shadow-listens-gateway.onrender.com,http://localhost:3000"
+
+# Secrets, set once with `wrangler secret put <NAME>` (never committed):
+#   STREAM_SIGNING_SECRET  must equal the stream service's, so its signed links verify here
+#   S3_ACCESS_KEY, S3_SECRET_KEY  Backblaze application key (read access to both buckets is enough)

@@ -1,0 +1,16 @@
+{
+  "name": "shadow-listens-cdn",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}
