@@ -85,6 +85,35 @@ button:not(:disabled) { cursor: pointer; }
     0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
+/* Clearer glass for floating controls (the mobile tab bar): far less tint than .glass-surface so the page
+   shows through and bends around the capsule, a bright specular rim on the top edge, a soft one below.
+   Legibility comes from white labels with a faint shadow rather than from a dark panel. */
+.glass-clear {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.09)),
+    rgba(18, 18, 26, 0.22);
+  -webkit-backdrop-filter: blur(20px) saturate(220%) brightness(1.1);
+  backdrop-filter: blur(20px) saturate(220%) brightness(1.1);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* The selected tab: a lighter lens riding on the clear glass. No backdrop-filter of its own, because inside a
+   backdrop-filtered parent it could only blur the bar itself, not the page. */
+.glass-lens {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08)),
+    rgba(240, 88, 122, 0.34); /* accent-tinted: the selected colour lives in the lens, the label stays white */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -6px 12px rgba(255, 255, 255, 0.08),
+    0 3px 12px rgba(0, 0, 0, 0.22);
+}
+
 /* Content cards/forms: lighter blur, same highlight edge. */
 .glass-card {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
@@ -98,6 +127,7 @@ button:not(:disabled) { cursor: pointer; }
 @media (prefers-reduced-transparency: reduce) {
   html[data-follow-system-transparency] .glass { background: #1b1b2a; -webkit-backdrop-filter: none; backdrop-filter: none; }
   html[data-follow-system-transparency] .glass-surface { background: #13131e; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  html[data-follow-system-transparency] .glass-clear { background: rgba(26, 27, 36, 0.92); -webkit-backdrop-filter: none; backdrop-filter: none; }
   html[data-follow-system-transparency] .glass-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
