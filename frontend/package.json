@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:unit": "node --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

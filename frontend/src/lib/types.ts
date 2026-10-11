@@ -12,6 +12,8 @@ export interface Track {
   duration_ms: number | null;
   cover_url: string | null;
   error: string | null;
+  tempo_bpm?: number | null; // audio analysis, used by the shuffle to order songs for flow
+  energy?: number | null;
   created_at: string;
 }
 

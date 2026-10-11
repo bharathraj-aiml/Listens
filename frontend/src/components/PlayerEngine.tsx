@@ -1,5 +1,6 @@
 "use client";
 
+import { recordPlay } from "@/lib/recentPlays";
 import Hls, { type Level } from "hls.js";
 import { useEffect, useRef } from "react";
 import { recordEvent } from "@/lib/events";
@@ -325,6 +326,7 @@ export default function PlayerEngine() {
     if (track) {
       session.current = { trackId: track.id, accumulatedMs: 0, lastMediaTime: 0, lastKnownPositionMs: 0, endedNaturally: false };
       recordEvent({ event_type: "play_start", track_id: track.id });
+      recordPlay(track.id);
     } else {
       session.current = null;
     }

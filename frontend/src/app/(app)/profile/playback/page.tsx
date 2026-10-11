@@ -57,10 +57,10 @@ export default function PlaybackPage() {
 
       <SettingsSection title="Shuffle" description="Picks the shuffle algorithm used by the shuffle button in Now Playing.">
         <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
-          <input type="radio" name="shuffle-style" checked={p.shuffleStyle === "fewer_repeats"} onChange={() => p.setShuffleStyle("fewer_repeats")} className="mt-1" />
+          <input type="radio" name="shuffle-style" checked={p.shuffleStyle === "smart"} onChange={() => p.setShuffleStyle("smart")} className="mt-1" />
           <span>
-            <span className="block text-sm">Fewer repeats</span>
-            <span className="block text-xs text-muted">Spreads tracks out so the same artist rarely plays twice in a row.</span>
+            <span className="block text-sm">Smart</span>
+            <span className="block text-xs text-muted">Plays your liked songs a little more often, avoids what you just heard, keeps the same artist or film from repeating, and flows between songs of similar energy so a soft melody is not followed by a loud beat.</span>
           </span>
         </label>
         <label className="flex cursor-pointer items-start gap-3 px-4 py-3">

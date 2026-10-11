@@ -1,10 +1,13 @@
 import { create } from "zustand";
 import { get as apiGet } from "@/lib/api";
+import { getRecentPlays } from "@/lib/recentPlays";
+import { smartShuffle } from "@/lib/shuffle";
 import type { Track } from "@/lib/types";
+import { useLikes } from "@/store/likes";
 
 export type Quality = "auto" | number; // number = kbps (96 / 160 / 320)
 export type RepeatMode = "off" | "all" | "one";
-export type ShuffleStyle = "standard" | "fewer_repeats";
+export type ShuffleStyle = "standard" | "smart";
 
 const PREFS_KEY = "listens.player";
 
@@ -32,7 +35,7 @@ const DEFAULT_PREFS: Prefs = {
   crossfadeSeconds: 0,
   gaplessPlayback: true,
   autoplaySimilar: true,
-  shuffleStyle: "standard",
+  shuffleStyle: "smart",
   dataSaver: false,
   defaultPlaylistPublic: true,
   compactRows: false,
@@ -51,7 +54,8 @@ function loadPrefs(): Prefs {
       crossfadeSeconds: typeof p.crossfadeSeconds === "number" ? Math.min(12, Math.max(0, p.crossfadeSeconds)) : DEFAULT_PREFS.crossfadeSeconds,
       gaplessPlayback: typeof p.gaplessPlayback === "boolean" ? p.gaplessPlayback : DEFAULT_PREFS.gaplessPlayback,
       autoplaySimilar: typeof p.autoplaySimilar === "boolean" ? p.autoplaySimilar : DEFAULT_PREFS.autoplaySimilar,
-      shuffleStyle: p.shuffleStyle === "fewer_repeats" ? "fewer_repeats" : DEFAULT_PREFS.shuffleStyle,
+      // stored as "shuffleMode": the old "shuffleStyle" key held a different pair of values and its "standard" was just the old default
+      shuffleStyle: p.shuffleMode === "standard" ? "standard" : DEFAULT_PREFS.shuffleStyle,
       dataSaver: typeof p.dataSaver === "boolean" ? p.dataSaver : DEFAULT_PREFS.dataSaver,
       defaultPlaylistPublic: typeof p.defaultPlaylistPublic === "boolean" ? p.defaultPlaylistPublic : DEFAULT_PREFS.defaultPlaylistPublic,
       compactRows: typeof p.compactRows === "boolean" ? p.compactRows : DEFAULT_PREFS.compactRows,
@@ -65,7 +69,7 @@ function loadPrefs(): Prefs {
 
 function savePrefs(p: Prefs) {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...p, shuffleMode: p.shuffleStyle }));
   } catch {
     /* ignore: storage unavailable (private mode) - prefs just won't survive a reload */
   }
@@ -77,27 +81,6 @@ function plainShuffle<T>(items: T[]): T[] {
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
-/** "Fewer repeats" style: greedily avoids placing two tracks by the same artist back to back
- *  (falls back to picking randomly from the whole remaining pool once no other-artist track is
- *  left). Not a guarantee for pathological inputs (e.g. one artist dominating the queue), just a
- *  much better *typical* spread than a plain shuffle - same spirit as Phase 6's smart shuffle. */
-function smartShuffle(items: Track[]): Track[] {
-  const pool = [...items];
-  const out: Track[] = [];
-  let lastArtistId: string | null = null;
-  while (pool.length) {
-    let idx = pool.findIndex((t) => t.artist.id !== lastArtistId);
-    if (idx === -1) idx = 0;
-    // among same-artist-eligible candidates, still pick randomly (not just the first)
-    const candidates = pool.map((t, i) => i).filter((i) => pool[i].artist.id !== lastArtistId);
-    idx = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : Math.floor(Math.random() * pool.length);
-    const [picked] = pool.splice(idx, 1);
-    out.push(picked);
-    lastArtistId = picked.artist.id;
   }
   return out;
 }
@@ -133,7 +116,7 @@ interface PlayerState {
   crossfadeSeconds: number; // Playback: fade out/in across a track boundary (0 = off, max 12s)
   gaplessPlayback: boolean; // Playback: prefetch the next track more aggressively
   autoplaySimilar: boolean; // Playback: keep playing similar tracks once the queue runs out
-  shuffleStyle: ShuffleStyle; // Playback: shuffle algorithm (see smartShuffle above)
+  shuffleStyle: ShuffleStyle; // Playback: shuffle algorithm (see lib/shuffle.ts)
   dataSaver: boolean; // Data-saving: forces the lowest quality rendition
   defaultPlaylistPublic: boolean; // Privacy: default visibility for newly created playlists
   compactRows: boolean; // Content & display: denser track-list rows
@@ -296,7 +279,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       // shuffle only the upcoming portion - history and the current track stay put
       const before = s.queue.slice(0, s.index + 1);
       const after = s.queue.slice(s.index + 1);
-      const shuffled = s.shuffleStyle === "fewer_repeats" ? smartShuffle(after) : plainShuffle(after);
+      const shuffled = s.shuffleStyle === "smart"
+        ? smartShuffle(after, s.queue[s.index] ?? null, { liked: useLikes.getState().ids, recentlyPlayed: getRecentPlays() })
+        : plainShuffle(after);
       return { shuffle: true, preShuffleQueue: s.queue, queue: [...before, ...shuffled] };
     }),
   cycleRepeat: () =>
