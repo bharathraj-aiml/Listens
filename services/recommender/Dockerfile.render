@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+WORKDIR /srv
+ENV PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1 PIP_DEFAULT_TIMEOUT=100
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+COPY libs/common /libs/common
+RUN --mount=type=cache,target=/root/.cache/pip pip install /libs/common
+COPY services/recommender/requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+COPY services/recommender/app ./app
+RUN useradd -r app && chown -R app /srv
+USER app
+# HTTP-triggered mode (app.http:app, POST /tick) instead of the persistent app.main loop -
+# see app/http.py for why. Render injects its own $PORT at runtime; shell form so it expands.
+CMD uvicorn app.http:app --host 0.0.0.0 --port ${PORT:-8000}

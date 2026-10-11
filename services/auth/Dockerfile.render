@@ -1,0 +1,21 @@
+# Unlike local docker-compose (a dedicated one-shot `migrate` service that everything else
+# waits on via depends_on: condition: service_completed_successfully), Render's free tier has
+# no equivalent "block until this other service finishes" primitive - so this one service
+# (arbitrarily, auth) runs the migration itself at startup before serving. alembic upgrade head
+# is idempotent, so re-running it on every subsequent deploy/restart is a safe no-op; the only
+# real risk is the very first deploy, if multiple services somehow start concurrently against
+# an un-migrated DB - avoid that by deploying auth alone first, then the rest, on initial setup.
+FROM python:3.12-slim
+WORKDIR /srv
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+COPY libs/common /libs/common
+RUN pip install /libs/common alembic==1.13.*
+COPY services/auth/requirements.txt .
+RUN pip install -r requirements.txt
+COPY services/auth/app ./app
+COPY migrations /srv/migrations
+RUN useradd -r app && chown -R app /srv
+USER app
+# Render injects its own $PORT at runtime (not a fixed 8000 like docker-compose) - shell form
+# so the variable actually expands; falls back to 8000 if unset, same as local.
+CMD alembic -c /srv/migrations/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

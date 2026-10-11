@@ -1,0 +1,11 @@
+# Render variant of the gateway: same nginx.conf shape as local docker-compose, but the
+# upstream addresses and listen port are filled in from env vars at container start (envsubst)
+# instead of being fixed docker-compose service names. See nginx.render.conf.template for the
+# "needs verification on first deploy" caveat about Render's internal hostnames.
+FROM nginx:1.27-alpine
+RUN apk add --no-cache gettext
+COPY gateway/nginx.render.conf.template /etc/nginx/nginx.conf.template
+# IMPORTANT: envsubst is given an explicit variable list. Without it, envsubst would also try
+# to substitute nginx's OWN $variables ($remote_addr, $http_upgrade, $host, ...), blanking them
+# out and breaking the config - only these five are ours.
+CMD sh -c "envsubst '\$PORT \$AUTH_UPSTREAM \$CATALOGUE_UPSTREAM \$STREAM_UPSTREAM \$FRONTEND_UPSTREAM' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
