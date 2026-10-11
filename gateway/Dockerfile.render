@@ -10,4 +10,4 @@ COPY gateway/nginx.render.conf.template /etc/nginx/nginx.conf.template
 # matters). IMPORTANT: envsubst is given an explicit variable list - without it, envsubst would
 # also try to substitute nginx's OWN $variables ($remote_addr, $http_upgrade, $host, ...),
 # blanking them out and breaking the config.
-CMD sh -c "RESOLVER_IP=$(awk '/^nameserver/{print \$2; exit}' /etc/resolv.conf) && export RESOLVER_IP && envsubst '\$PORT \$RESOLVER_IP \$AUTH_UPSTREAM \$CATALOGUE_UPSTREAM \$STREAM_UPSTREAM \$FRONTEND_UPSTREAM' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
+CMD RESOLVER_IP=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf) && export RESOLVER_IP && envsubst '$PORT $RESOLVER_IP $AUTH_UPSTREAM $CATALOGUE_UPSTREAM $STREAM_UPSTREAM $FRONTEND_UPSTREAM' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
