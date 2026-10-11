@@ -20,6 +20,7 @@ export default function Sidebar() {
   const path = usePathname();
   const { user } = useAuth();
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+  const activeIndex = NAV.findIndex(({ href }) => active(href));
 
   return (
     <>
@@ -37,13 +38,31 @@ export default function Sidebar() {
         <div className="mt-auto truncate border-t border-line pt-4 text-sm text-muted" data-testid="whoami">{user ? `@${user.username}` : ""}</div>
       </nav>
 
-      {/* mobile: bottom tab bar */}
+      {/* mobile: bottom tab bar. A glass pill slides to the active tab (spring-like overshoot), the active icon
+          lifts and pops once when it becomes active. All motion is dropped for prefers-reduced-motion. */}
       <nav aria-label="Main" className="glass-surface fixed inset-x-3 bottom-3 z-30 flex h-14 rounded-2xl md:hidden">
-        {NAV.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} className={`flex flex-1 flex-col items-center justify-center gap-0.5 text-xs transition-colors active:scale-95 ${active(href) ? "text-accent" : "text-muted"}`}>
-            <Icon /> {label}
-          </Link>
-        ))}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1.5 left-0 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.64,1)] motion-reduce:transition-none"
+          style={{ width: `${100 / NAV.length}%`, transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`, opacity: activeIndex < 0 ? 0 : 1 }}
+        >
+          <span className="mx-1 block h-full rounded-xl bg-white/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]" />
+        </span>
+        {NAV.map(({ href, label, Icon }, i) => {
+          const isActive = i === activeIndex;
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={`relative z-10 flex flex-1 flex-col items-center justify-center gap-0.5 text-xs transition-[color,transform] duration-200 active:scale-90 motion-reduce:transition-none ${isActive ? "text-accent" : "text-muted"}`}
+            >
+              <span className={`block transition-transform duration-300 motion-reduce:transition-none ${isActive ? "-translate-y-0.5 scale-110 animate-tab-pop" : ""}`}>
+                <Icon />
+              </span>
+              {label}
+            </Link>
+          );
+        })}
       </nav>
     </>
   );
