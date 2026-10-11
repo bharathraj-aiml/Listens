@@ -47,6 +47,13 @@ http {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    # Render's free tier sleeps an idle service after ~15 min; the first request after that
+    # wakes it, observed taking up to ~30s in testing. nginx's 60s default *should* cover that,
+    # but give real margin - a 502 here means a real user's first request of the session fails
+    # for no reason other than bad luck on timing, not an actual problem with the request.
+    proxy_connect_timeout 90s;
+    proxy_read_timeout 90s;
+    proxy_send_timeout 90s;
 
     location = /healthz { return 200 "ok\n"; }
 
