@@ -4,7 +4,7 @@
 # free tier (idle web services sleep after ~15 min and take 30-60s to wake on the next request).
 #
 # GitHub Actions schedules are "best effort" and the platform doesn't allow more than once every
-# 5 minutes, so that's the floor here - a real backlog may take a few ticks to fully drain.
+# 5 minutes; we run every 10 to halve Actions usage - a real backlog may take a few ticks to fully drain.
 #
 # The three service URLs are public (not secrets), so they're written inline below - no
 # repo secrets needed. If a service is renamed or moved, update them here.
@@ -12,7 +12,7 @@ name: Tick background services
 
 on:
   schedule:
-    - cron: "*/5 * * * *"  # worker + events
+    - cron: "*/10 * * * *"  # worker + events
     - cron: "0 3 * * *"    # recommender, once daily
   workflow_dispatch: {}
 
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   tick-worker-and-events:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/5 * * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/10 * * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Tick worker (drain transcode queue)
