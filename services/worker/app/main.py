@@ -1,4 +1,5 @@
 import logging
+import os
 import socket
 
 import redis
@@ -20,7 +21,7 @@ def main() -> None:
         settings.redis_url, decode_responses=True,
         socket_timeout=30, socket_connect_timeout=5, health_check_interval=30,
     )
-    consumer = f"worker-{socket.gethostname()}"
+    consumer = f"worker-{socket.gethostname()}-{os.getpid()}"  # unique per process so several can share the queue
     logging.getLogger("worker").info("transcode worker %s started", consumer)
     run_forever(r, get_sessionmaker(), get_s3(), settings, consumer)
 
