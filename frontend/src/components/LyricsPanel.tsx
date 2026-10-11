@@ -84,22 +84,15 @@ function GlassLyrics() {
       <div
         onPointerDown={headerSwipe.onPointerDown}
         onPointerUp={headerSwipe.onPointerUp}
-        className="absolute inset-x-0 top-0 z-10 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]"
+        className="absolute inset-x-0 top-0 z-10 flex justify-end px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]"
       >
-        <div className="glass flex items-center gap-3 rounded-full p-2 pr-3">
-          <Cover id={track.id} url={track.cover_url} size={44} className="rounded-full" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-white">{track.title}</div>
-            <div className="truncate text-xs text-white/70">{track.artist.name}</div>
-          </div>
-          <button
-            aria-label="Close lyrics"
-            onClick={() => setOpen(false)}
-            className="glass flex size-10 items-center justify-center rounded-full text-white active:scale-90"
-          >
-            <CaretDownIcon />
-          </button>
-        </div>
+        <button
+          aria-label="Close lyrics"
+          onClick={() => setOpen(false)}
+          className="glass flex size-11 items-center justify-center rounded-full text-white active:scale-90"
+        >
+          <CaretDownIcon />
+        </button>
       </div>
 
       {/* lyrics scroll area, faded at both edges; big padding lets the first and last line reach the centre */}
@@ -113,10 +106,26 @@ function GlassLyrics() {
       {/* frosted transport */}
       <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="glass rounded-[2rem] px-5 pb-3 pt-4">
-          <div className="h-1 w-full overflow-hidden rounded-full bg-white/20">
-            <div className="h-full rounded-full bg-white/90" style={{ width: `${progress}%` }} />
+          <div className="flex items-center gap-3">
+            <Cover id={track.id} url={track.cover_url} size={44} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-white">{track.title}</div>
+              <div className="truncate text-xs text-white/70">{track.artist.name}</div>
+            </div>
           </div>
-          <div className="mt-1 flex justify-between font-mono text-[11px] tabular-nums text-white/70">
+          <input
+            aria-label="Seek"
+            data-testid="lyrics-seek"
+            type="range"
+            min={0}
+            max={Math.max(duration, 1)}
+            step={0.5}
+            value={Math.min(p.currentTime, duration || 0)}
+            onChange={(e) => p.requestSeek(Number(e.target.value))}
+            style={{ background: `linear-gradient(to right, rgba(255,255,255,0.9) ${progress}%, rgba(255,255,255,0.2) ${progress}%)` }}
+            className="mt-3 block h-1 w-full cursor-pointer appearance-none rounded-full accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white"
+          />
+          <div className="mt-2 flex justify-between font-mono text-[11px] tabular-nums text-white/70">
             <span>{formatTime(p.currentTime)}</span>
             <span>{formatTime(duration)}</span>
           </div>
