@@ -1,9 +1,16 @@
 # Render Blueprint - deploys the whole stack as separate free Web Services, with the gateway
 # service replicating docker-compose's single-origin routing (see gateway/nginx.render.conf.template).
 #
+# MANUAL STEP AFTER FIRST SYNC: render.yaml has no field for a service to reference an
+# envVarGroup (confirmed against Render's docs - the service schema genuinely doesn't have
+# one). The shadow-listens-shared group below still needs to be linked to each of auth,
+# catalogue, stream, worker, events, and recommender by hand: open each service -> Environment
+# tab -> "Linked Environment Groups" -> select shadow-listens-shared -> Link. One-time, six
+# clicks total; it's not something a render.yaml edit can do.
+#
 # STILL UNVERIFIED: the AUTH_UPSTREAM/CATALOGUE_UPSTREAM/STREAM_UPSTREAM/FRONTEND_UPSTREAM
 # values below assume Render's internal service address is "http://<service-name>:<port>".
-# The gateway now resolves these lazily per-request (not at startup - see
+# The gateway resolves these lazily per-request (not at startup - see
 # nginx.render.conf.template), so a wrong hostname shows up as 502s on specific routes rather
 # than the whole service crash-looping. If that happens, check each backend service's
 # "Internal Address" in the Render dashboard and fix these values to match.
@@ -58,8 +65,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/auth/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
@@ -71,8 +76,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/catalogue/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
@@ -84,8 +87,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/stream/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
@@ -97,8 +98,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/worker/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
@@ -110,8 +109,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/events/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
@@ -123,8 +120,6 @@ services:
     dockerContext: .
     dockerfilePath: ./services/recommender/Dockerfile.render
     healthCheckPath: /health
-    envVarGroups:
-      - shadow-listens-shared
     envVars:
       - key: PORT
         value: "8000"
