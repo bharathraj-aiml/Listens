@@ -40,3 +40,19 @@ def test_malformed_file_returns_empty_dict_not_raise(tmp_path):
 
 def test_missing_file_returns_empty_dict_not_raise(tmp_path):
     assert audio_features.extract_features(tmp_path / "does_not_exist.mp3") == {}
+
+
+def test_extracts_a_fixed_length_fingerprint_vector(tmp_path):
+    vec = audio_features.extract_features(_rhythmic_file(tmp_path)).get("vector")
+    assert vec is not None and len(vec) == audio_features.VECTOR_DIMS
+
+
+def test_fingerprint_tells_different_sounds_apart(tmp_path):
+    low = tmp_path / "low.mp3"
+    high = tmp_path / "high.mp3"
+    for path, freq in ((low, 110), (high, 1760)):
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=8",
+                        "-b:a", "192k", str(path)], check=True)
+    a = audio_features.extract_features(low)["vector"]
+    b = audio_features.extract_features(high)["vector"]
+    assert a != b

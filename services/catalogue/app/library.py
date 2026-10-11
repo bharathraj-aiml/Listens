@@ -317,7 +317,9 @@ def made_for_you(
     vector. Until then - or if ALS still can't fill the full page (a very sparse profile) -
     falls back to a heuristic: tracks by artists you've liked or played, that you haven't
     already played, then newest-ready tracks, so new users never see an empty section."""
-    picks = list(recommendations.als_made_for_you(db, user_id, limit) or [])
+    picks = recommendations.hybrid_made_for_you(db, user_id, limit)
+    if picks is None:  # nothing to compare on yet: the ALS / heuristic path below
+        picks = list(recommendations.als_made_for_you(db, user_id, limit) or [])
     played_tracks = select(PlayEvent.track_id).where(PlayEvent.user_id == user_id)
 
     if len(picks) < limit:

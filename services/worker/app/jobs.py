@@ -96,7 +96,7 @@ def process_track(db: Session, s3, settings: Settings, track_id) -> str:
         update(Track).where(Track.id == track_id).values(
             status="ready", hls_prefix=prefix, duration_ms=info.duration_ms,
             source_bitrate_kbps=info.bitrate_kbps, cover_key=cover_key, error=None,
-            tempo_bpm=features.get("tempo_bpm"), energy=features.get("energy"),
+            tempo_bpm=features.get("tempo_bpm"), energy=features.get("energy"), audio_vector=features.get("vector"),
         )
     )
     db.commit()

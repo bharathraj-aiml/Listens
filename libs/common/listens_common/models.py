@@ -128,6 +128,9 @@ class Track(Base):
     # tracks" for a track with no listening history yet, i.e. no ALS vector (see Phase 5).
     tempo_bpm: Mapped[float | None] = mapped_column(Float)
     energy: Mapped[float | None] = mapped_column(Float)  # mean RMS amplitude, roughly "loudness/intensity"
+    # Timbre/harmony fingerprint (MFCC + chroma + spectral contrast means, ~34 floats) from the same
+    # librosa pass. Raw values; the recommender standardises per dimension across the library.
+    audio_vector: Mapped[list[float] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = _created_at()
 
     artist: Mapped[Artist] = relationship(lazy="joined")
@@ -266,3 +269,17 @@ class TrackVector(Base):
     track_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
     vector: Mapped[list[float]] = mapped_column(JSON, nullable=False)
     trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ArtistMeta(Base):
+    """Open-data context for an artist, fetched by scripts/enrich_library.py: the MusicBrainz id and
+    tags, and ListenBrainz's "similar artists" (collaborative filtering over real listening sessions).
+    `similar` is a list of {"mbid", "name", "score"}. One row per artist; absent until enriched."""
+
+    __tablename__ = "artist_meta"
+
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("artists.id", ondelete="CASCADE"), primary_key=True)
+    mbid: Mapped[str | None] = mapped_column(String(36))
+    tags: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
+    similar: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -16,7 +16,8 @@ the next starts.
 - ✅ **Phase 5 – Recommendations:** implicit-feedback ALS (nightly `recommender` service), ALS-ranked
   "made for you" (max 2 per artist), "similar tracks" via vector cosine similarity, cold-start
   fallback via `librosa` tempo/energy then same-artist/genre.
-- ⏳ Phase 6 – smart shuffle (artist-spreading shuffle vs. Fisher–Yates) — next.
+- ✅ **Phase 6 – Smarter suggestions and shuffle** (tuned for Tamil film music): a hybrid recommender that works for
+  one listener on a small library, plus a flow-aware shuffle. See "Suggestions and shuffle" below.
 
 ## Layout
 
@@ -294,8 +295,35 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   Phase 4); missing `libgomp.so.1`, a non-writable `numba` JIT cache directory, and a made-for-you artist-cap leak
   (all Phase 5, all only caught by testing the real Docker container, not local pytest).
 
+## Suggestions and shuffle
+
+ALS (Phase 5) needs many listeners; with one user and a small library it learns very little. "Made for you" and
+"similar tracks" are therefore a hybrid (`services/catalogue/app/taste.py`) that compares tracks on:
+
+| Signal | Source |
+|---|---|
+| Audio fingerprint (timbre, harmony, brightness) | `librosa` in the worker, stored in `tracks.audio_vector` |
+| Tempo and loudness (half/double time counts as a match) | `librosa` |
+| Artist relatedness | ListenBrainz "similar artists" (real listening sessions) and MusicBrainz tags, stored in `artist_meta` |
+| Same film (album title), era, language | album tag, album date, Tamil script, and a built-in 80s/90s/modern Tamil singer and composer list (`tamil_seed.py`) |
+
+Your taste is the songs you liked, saved or finished (repeats count more) minus early skips; a candidate scores by its
+closeness to the nearest of those, so a 90s and a 2020s taste can coexist. Results are re-ranked (MMR) so they are
+varied, and blended with ALS when it has trained. Everything degrades gracefully: a missing signal is skipped.
+
+Fetch the open data for your library (dry run by default; needs `.env.prod` values in the environment):
+
+```
+.venv/Scripts/python scripts/enrich_library.py --apply            # artist relatedness + tags
+.venv/Scripts/python scripts/enrich_library.py --audio --apply    # fingerprints for songs uploaded before this existed
+```
+
+**Shuffle** (`frontend/src/lib/shuffle.ts`, Settings > Playback > Shuffle > Smart) draws each next song at random but
+weighted: liked songs a bit more often, songs played in the last 6 hours less, the same artist or film back to back far
+less, and songs of similar energy and tempo to the previous one more, so a soft melody is not followed by a loud beat.
+Nothing is excluded, it is a bias. Unit tests: `cd frontend && npm run test:unit`.
+
 ## Next
 
-Phase 6: a smart-shuffle algorithm that spreads an artist's tracks out across a shuffled queue instead of plain
-Fisher–Yates (which can cluster the same artist back-to-back by chance), a small script measuring same-artist
-adjacency to show the difference is real, and an optional recommendation-injected "smart shuffle" mode.
+Smarter suggestions are built; next is measuring them against your listening: skip rate on recommended
+songs vs. the old ALS and heuristic picks.

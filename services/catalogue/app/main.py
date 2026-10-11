@@ -244,7 +244,7 @@ def get_similar_tracks(
     track = _get_track(db, track_id)
     if track.status != "ready" and track.uploader_id != user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Track not found")
-    picks = recommendations.similar_tracks(db, track, limit)
+    picks = recommendations.similar_tracks(db, track, limit, user_id)
     return [track_out(t, settings, user_id) for t in picks]
 
 

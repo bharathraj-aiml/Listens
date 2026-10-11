@@ -36,5 +36,7 @@ def track_out(track: Track, settings: Settings, user_id: uuid.UUID | None = None
         duration_ms=track.duration_ms,
         cover_url=cover_url,
         error=track.error,
+        tempo_bpm=track.tempo_bpm,
+        energy=track.energy,
         created_at=track.created_at,
     )

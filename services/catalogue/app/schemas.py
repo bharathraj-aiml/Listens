@@ -31,6 +31,8 @@ class TrackOut(BaseModel):
     duration_ms: int | None
     cover_url: str | None
     error: str | None = None
+    tempo_bpm: float | None = None  # audio analysis; the player's shuffle uses these to order for flow
+    energy: float | None = None
     created_at: datetime
 
 
