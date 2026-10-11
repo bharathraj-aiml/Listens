@@ -40,6 +40,22 @@ function onPlayError(e: unknown) {
   st.setError("Playback was blocked. Press play to start.");
 }
 
+/** Crossfade-lite: a volume ramp across the last/first `crossfadeSeconds` of a track, not true
+ *  overlapping playback of two streams (that would need two full HLS/decoder pipelines running
+ *  at once - out of scope here). Still a real, audible transition tied to the slider, just a
+ *  fade rather than a blend. */
+function applyFade(audio: HTMLAudioElement, fadeGain: GainNode, ctx: AudioContext) {
+  const seconds = usePlayer.getState().crossfadeSeconds;
+  if (seconds <= 0 || !Number.isFinite(audio.duration)) {
+    if (fadeGain.gain.value !== 1) fadeGain.gain.setTargetAtTime(1, ctx.currentTime, 0.05);
+    return;
+  }
+  const remaining = audio.duration - audio.currentTime;
+  if (remaining <= seconds) fadeGain.gain.setTargetAtTime(Math.max(0, remaining / seconds), ctx.currentTime, 0.05);
+  else if (audio.currentTime < seconds) fadeGain.gain.setTargetAtTime(Math.min(1, audio.currentTime / seconds), ctx.currentTime, 0.05);
+  else if (fadeGain.gain.value !== 1) fadeGain.gain.setTargetAtTime(1, ctx.currentTime, 0.05);
+}
+
 /**
  * Owns the <audio> element and keeps it in sync with the Zustand player store. Mounted once in the
  * (app) layout, so playback survives client-side navigation between pages.
@@ -52,6 +68,12 @@ export default function PlayerEngine() {
   const lastPositionState = useRef(0);
   const session = useRef<PlaySession | null>(null);
   const prevTrackId = useRef<string | null>(null);
+  // Web Audio graph: source -> [compressor if normalizing] -> [mono downmix if enabled] -> fadeGain -> destination
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
+  const monoRef = useRef<GainNode | null>(null);
+  const fadeGainRef = useRef<GainNode | null>(null);
 
   const track = usePlayer(currentTrack);
   const nextTrack = usePlayer((s) => s.queue[s.index + 1] ?? null);
@@ -61,6 +83,9 @@ export default function PlayerEngine() {
   const quality = usePlayer((s) => s.quality);
   const levels = usePlayer((s) => s.levels);
   const seekRequest = usePlayer((s) => s.seekRequest);
+  const monoAudio = usePlayer((s) => s.monoAudio);
+  const volumeNormalization = usePlayer((s) => s.volumeNormalization);
+  const gaplessPlayback = usePlayer((s) => s.gaplessPlayback);
 
   // --- one-time wiring of <audio> events -> store ------------------------------------------
   useEffect(() => {
@@ -70,6 +95,7 @@ export default function PlayerEngine() {
     const handlers: Record<string, () => void> = {
       timeupdate: () => {
         st().setTime(audio.currentTime);
+        if (audioCtxRef.current && fadeGainRef.current) applyFade(audio, fadeGainRef.current, audioCtxRef.current);
         const s = session.current;
         if (s) {
           // Only count time that was actually spent playing: clamp the per-tick delta so a
@@ -118,6 +144,18 @@ export default function PlayerEngine() {
       },
       ended: () => {
         if (session.current) session.current.endedNaturally = true;
+        // repeat-one: loop the same track rather than advancing (next() handles repeat-all's
+        // end-of-queue wraparound - this is the one case that isn't "go to a different track").
+        if (st().repeatMode === "one") {
+          audio.currentTime = 0;
+          audioCtxRef.current?.resume();
+          audio.play().catch(onPlayError);
+          if (session.current) {
+            session.current.lastMediaTime = 0;
+            session.current.endedNaturally = false;
+          }
+          return;
+        }
         st().next();
       },
       error: () => {
@@ -132,6 +170,53 @@ export default function PlayerEngine() {
       audio.pause();
     };
   }, []);
+
+  // --- Web Audio graph: built once, rewired (not rebuilt) when mono/normalization toggle -------
+  // createMediaElementSource can only ever be called once per <audio> element, so this effect's
+  // empty deps array matters: it must run exactly once for the lifetime of this persistent player.
+  useEffect(() => {
+    const audio = audioRef.current!;
+    const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return; // very old browser: play back without the enhancement chain, not at all
+    const ctx = new AudioCtx();
+    const source = ctx.createMediaElementSource(audio);
+    const compressor = ctx.createDynamicsCompressor(); // approximates "volume normalisation"
+    const mono = ctx.createGain();
+    mono.channelCount = 1;
+    mono.channelCountMode = "explicit"; // forces the stereo input down to 1 channel per the Web Audio spec
+    mono.channelInterpretation = "speakers";
+    const fadeGain = ctx.createGain(); // crossfade-lite (see applyFade)
+    audioCtxRef.current = ctx;
+    sourceRef.current = source;
+    compressorRef.current = compressor;
+    monoRef.current = mono;
+    fadeGainRef.current = fadeGain;
+    return () => {
+      ctx.close().catch(() => {});
+    };
+  }, []);
+
+  // Rewires the graph when a toggle changes (cheap: at most two extra node hops, done rarely).
+  useEffect(() => {
+    const ctx = audioCtxRef.current;
+    const source = sourceRef.current, compressor = compressorRef.current, mono = monoRef.current, fadeGain = fadeGainRef.current;
+    if (!ctx || !source || !compressor || !mono || !fadeGain) return;
+    source.disconnect();
+    compressor.disconnect();
+    mono.disconnect();
+    fadeGain.disconnect();
+    let node: AudioNode = source;
+    if (volumeNormalization) {
+      node.connect(compressor);
+      node = compressor;
+    }
+    if (monoAudio) {
+      node.connect(mono);
+      node = mono;
+    }
+    node.connect(fadeGain);
+    fadeGain.connect(ctx.destination);
+  }, [monoAudio, volumeNormalization]);
 
   // --- load the current track ---------------------------------------------------------------
   useEffect(() => {
@@ -204,7 +289,10 @@ export default function PlayerEngine() {
       try {
         const url = await getStreamUrl(track.id);
         if (cancelled) return;
-        if (attach(url) && st().playing) await audio.play().catch(onPlayError);
+        if (attach(url) && st().playing) {
+          audioCtxRef.current?.resume();
+          await audio.play().catch(onPlayError);
+        }
       } catch {
         if (!cancelled) {
           switching.current = false;
@@ -219,8 +307,8 @@ export default function PlayerEngine() {
   }, [track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- event lifecycle: close out the outgoing track (play_end or skip), open the next one -------------
-  // play_start drives "recently played"; play_end with ms_played >= 30s drives "top tracks" and
-  // skip rate (see services/catalogue/app/analytics.py). Whether the outgoing track's close event
+  // play_start drives "recently played"/Recents; play_end with ms_played >= 30s drives Listening
+  // stats' top track (see services/catalogue/app/analytics.py). Whether the outgoing track's close event
   // is "play_end" or "skip" is decided by session.endedNaturally, set by the 'ended' handler above;
   // the skip *reason* comes from the store (set by next()/prev()/jumpTo()/playQueue()/removeAt()).
   useEffect(() => {
@@ -248,8 +336,10 @@ export default function PlayerEngine() {
   useEffect(() => {
     const audio = audioRef.current!;
     if (!audio.src && !hlsRef.current) return; // nothing loaded yet; the load effect starts playback
-    if (playing) audio.play().catch(onPlayError);
-    else audio.pause();
+    if (playing) {
+      audioCtxRef.current?.resume();
+      audio.play().catch(onPlayError);
+    } else audio.pause();
   }, [playing]);
 
   // --- volume, seek, quality --------------------------------------------------------------------
@@ -271,13 +361,18 @@ export default function PlayerEngine() {
   }, [quality, levels]);
 
   // --- prefetch the next track so "next" is instant -----------------------------------------------
+  // "Gapless playback" can't be true sample-accurate gaplessness across two independently
+  // transcoded HLS streams without a second decode pipeline (out of scope - see applyFade's
+  // comment for the same trade-off on crossfade) - but prefetching the next track's manifest
+  // and first segment *immediately* instead of waiting noticeably shortens the real gap, which
+  // is what this toggle actually controls.
   useEffect(() => {
     if (!nextTrack) return;
     const t = setTimeout(() => {
       prefetchTrack(nextTrack.id, usePlayer.getState().quality).catch(() => {});
-    }, 3000);
+    }, gaplessPlayback ? 0 : 3000);
     return () => clearTimeout(t);
-  }, [nextTrack?.id, track?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nextTrack?.id, track?.id, gaplessPlayback]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- lock-screen / media-key integration + tab title ----------------------------------------------
   useEffect(() => {
@@ -316,6 +411,44 @@ export default function PlayerEngine() {
   useEffect(() => {
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   }, [playing]);
+
+  // --- keyboard shortcuts: space (play/pause), left/right (prev/next), up/down (volume) ------------
+  useEffect(() => {
+    const VOLUME_STEP = 0.05;
+    function isTyping(el: EventTarget | null) {
+      if (!(el instanceof HTMLElement)) return false;
+      return el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+      const st = usePlayer.getState();
+      switch (e.key) {
+        case " ":
+        case "Spacebar":
+          e.preventDefault(); // stop the page from scrolling
+          st.toggle();
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          st.next();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          st.prev();
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          st.setVolume(Math.min(1, st.volume + VOLUME_STEP));
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          st.setVolume(Math.max(0, st.volume - VOLUME_STEP));
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return <audio ref={audioRef} preload="auto" data-testid="audio" className="hidden" />;
 }

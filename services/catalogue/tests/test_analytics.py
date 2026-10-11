@@ -19,69 +19,48 @@ def event(env, user_id, track_id, event_type, *, ms_played=None, occurred_at=Non
         db.commit()
 
 
-def test_top_tracks_only_counts_plays_past_the_30s_threshold(env):
-    long_play, *_ = seed(env, "Long Play")
-    short_play, *_ = seed(env, "Short Play")
-    event(env, env.user_id, long_play, "play_end", ms_played=45_000)
-    event(env, env.user_id, long_play, "play_end", ms_played=60_000)
-    event(env, env.user_id, short_play, "play_end", ms_played=5_000)  # under threshold: doesn't count
+def test_listening_stats_this_week_top_artist_and_track(env):
+    today = datetime.now(UTC).date()
+    monday = today - timedelta(days=today.isoweekday() - 1)
+    mid_week = datetime.combine(monday + timedelta(days=2), datetime.min.time(), tzinfo=UTC) + timedelta(hours=12)
 
-    out = env.client.get("/analytics/top-tracks", headers=h(env)).json()
-    assert [(o["track"]["title"], o["stream_count"]) for o in out] == [("Long Play", 2)]
+    tid_a, *_ = seed(env, "Song A", artist="Artist A")
+    tid_b, *_ = seed(env, "Song B", artist="Artist B")
+    for _ in range(3):  # Artist A: 3 play_starts -> top artist
+        event(env, env.user_id, tid_a, "play_start", occurred_at=mid_week)
+    event(env, env.user_id, tid_b, "play_start", occurred_at=mid_week)
+    for _ in range(2):  # Song A: 2 verified streams -> top track
+        event(env, env.user_id, tid_a, "play_end", ms_played=40_000, occurred_at=mid_week)
 
-
-def test_top_tracks_ordered_by_stream_count_desc(env):
-    a, *_ = seed(env, "A")
-    b, *_ = seed(env, "B")
-    for _ in range(3):
-        event(env, env.user_id, a, "play_end", ms_played=40_000)
-    event(env, env.user_id, b, "play_end", ms_played=40_000)
-    titles = [o["track"]["title"] for o in env.client.get("/analytics/top-tracks", headers=h(env)).json()]
-    assert titles == ["A", "B"]
-
-
-def test_top_tracks_is_per_user(env):
-    tid, *_ = seed(env, "Mine")
-    event(env, env.user_id, tid, "play_end", ms_played=40_000)
-    assert env.client.get("/analytics/top-tracks", headers=env.other_headers).json() == []
-    assert len(env.client.get("/analytics/top-tracks", headers=h(env)).json()) == 1
+    out = env.client.get("/analytics/listening-stats?range=this_week", headers=h(env)).json()
+    assert out["top_artist"]["artist"]["name"] == "Artist A"
+    assert out["top_artist"]["play_count"] == 3
+    assert out["top_track"]["track"]["title"] == "Song A"
+    assert out["top_track"]["stream_count"] == 2
 
 
-def test_skip_rate_requires_minimum_plays_and_sorts_highest_first(env):
-    one_play_one_skip, *_ = seed(env, "Too few plays")  # 1 play, below the minimum: excluded
-    event(env, env.user_id, one_play_one_skip, "play_start")
-    event(env, env.user_id, one_play_one_skip, "skip")
-
-    mostly_skipped, *_ = seed(env, "Mostly skipped")
-    for _ in range(3):
-        event(env, env.user_id, mostly_skipped, "play_start")
-    for _ in range(2):
-        event(env, env.user_id, mostly_skipped, "skip")  # 2/3 skipped
-
-    rarely_skipped, *_ = seed(env, "Rarely skipped")
-    for _ in range(4):
-        event(env, env.user_id, rarely_skipped, "play_start")
-    event(env, env.user_id, rarely_skipped, "skip")  # 1/4 skipped
-
-    out = env.client.get("/analytics/skip-rate", headers=h(env)).json()
-    titles = [o["track"]["title"] for o in out]
-    assert titles == ["Mostly skipped", "Rarely skipped"]  # "Too few plays" excluded, highest rate first
-    assert out[0]["play_count"] == 3 and out[0]["skip_count"] == 2 and out[0]["skip_rate"] == 0.6667
+def test_listening_stats_last_week_excludes_this_weeks_plays(env):
+    tid, *_ = seed(env, "Recent")
+    event(env, env.user_id, tid, "play_start")  # occurs now -> this week, not last week
+    out = env.client.get("/analytics/listening-stats?range=last_week", headers=h(env)).json()
+    assert out["top_artist"] is None and out["top_track"] is None
 
 
-def test_listening_by_hour_covers_all_24_hours_with_zero_fill(env):
-    tid, *_ = seed(env, "Song")
-    event(env, env.user_id, tid, "play_start", occurred_at=datetime(2026, 1, 1, 9, 30, tzinfo=UTC))
-    event(env, env.user_id, tid, "play_start", occurred_at=datetime(2026, 1, 2, 9, 45, tzinfo=UTC))
-    event(env, env.user_id, tid, "play_start", occurred_at=datetime(2026, 1, 1, 22, 0, tzinfo=UTC))
+def test_recents_groups_by_day_with_most_played_as_cover(env):
+    tid_a, *_ = seed(env, "Morning Song")
+    tid_b, *_ = seed(env, "Evening Song")
+    today = datetime.now(UTC)
+    event(env, env.user_id, tid_a, "play_start", occurred_at=today)
+    event(env, env.user_id, tid_a, "play_start", occurred_at=today)
+    event(env, env.user_id, tid_b, "play_start", occurred_at=today)
+    event(env, env.user_id, tid_a, "play_start", occurred_at=today - timedelta(days=1))
 
-    out = env.client.get("/analytics/listening-by-hour", headers=h(env)).json()
-    assert len(out) == 24
-    by_hour = {o["hour"]: o["count"] for o in out}
-    assert by_hour[9] == 2 and by_hour[22] == 1 and by_hour[0] == 0
+    out = env.client.get("/analytics/recents", headers=h(env)).json()
+    assert out[0]["play_count"] == 3  # today: 2 (Morning) + 1 (Evening)
+    assert out[0]["cover_track"]["title"] == "Morning Song"  # today's most-played
+    assert out[1]["play_count"] == 1  # yesterday
 
 
 def test_analytics_requires_auth(env):
-    assert env.client.get("/analytics/top-tracks").status_code == 401
-    assert env.client.get("/analytics/skip-rate").status_code == 401
-    assert env.client.get("/analytics/listening-by-hour").status_code == 401
+    assert env.client.get("/analytics/listening-stats").status_code == 401
+    assert env.client.get("/analytics/recents").status_code == 401

@@ -79,6 +79,8 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}, aut
 export const get = <T,>(path: string) => api<T>(path);
 export const post = <T,>(path: string, body?: unknown, auth = true) =>
   api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, auth);
+export const patch = <T,>(path: string, body?: unknown) =>
+  api<T>(path, { method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) });
 
 /** Multipart upload with progress (fetch can't report upload progress, XHR can). */
 export async function upload<T>(path: string, form: FormData, onProgress: (fraction: number) => void): Promise<T> {

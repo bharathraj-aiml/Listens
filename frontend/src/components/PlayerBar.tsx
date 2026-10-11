@@ -1,17 +1,26 @@
 "use client";
 
-import Link from "next/link";
 import Cover from "@/components/Cover";
 import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, SimilarIcon, VolumeIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
 import QualitySelect from "@/components/QualitySelect";
 import { formatTime } from "@/lib/format";
+import { useSwipe } from "@/lib/swipe";
 import { currentTrack, usePlayer } from "@/store/player";
 
-/** Persistent mini-player: lives in the (app) layout so it stays put (and keeps playing) across pages. */
+/** Persistent mini-player: lives in the (app) layout so it stays put (and keeps playing) across
+ *  pages. On mobile this is deliberately slim - cover, title, play/pause, next - because six
+ *  44px icon buttons (prev/play/next/lyrics/queue/similar) squeezed into the same row left
+ *  *zero* room for the title (confirmed by screenshot: no text rendered at all). Every other
+ *  control lives in NowPlayingSheet, one tap or swipe-up away. */
 export default function PlayerBar() {
   const track = usePlayer(currentTrack);
   const p = usePlayer();
+  const openNowPlaying = useSwipe({
+    onTap: () => p.setNowPlayingOpen(true),
+    onSwipeLeft: p.next,
+    onSwipeRight: p.prev,
+  });
   if (!track) return null;
   const duration = p.duration || (track.duration_ms ?? 0) / 1000;
   const hasNext = p.index + 1 < p.queue.length;
@@ -23,49 +32,67 @@ export default function PlayerBar() {
     >
       {/* thin progress line on mobile (the full slider is desktop-only) */}
       <div className="h-0.5 bg-line md:hidden">
-        <div className="h-full bg-accent" style={{ width: duration ? `${Math.min(100, (p.currentTime / duration) * 100)}%` : 0 }} />
+        <div className="h-full bg-accent transition-[width]" style={{ width: duration ? `${Math.min(100, (p.currentTime / duration) * 100)}%` : 0 }} />
       </div>
-      <div className="mx-auto grid max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 md:grid-cols-[1fr_minmax(320px,2fr)_1fr] md:px-4">
+      <div
+        data-testid="now-playing-trigger"
+        role="button"
+        tabIndex={0}
+        aria-label="Open now playing"
+        onPointerDown={openNowPlaying.onPointerDown}
+        onPointerUp={openNowPlaying.onPointerUp}
+        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && p.setNowPlayingOpen(true)}
+        className="mx-auto grid max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 md:grid-cols-[1fr_minmax(320px,2fr)_1fr] md:px-4"
+      >
+        {/* Tapping anywhere on the bar opens Now Playing (mobile) or does nothing (desktop, where
+            the sheet is md:hidden) - every actual control below stops propagation so its own
+            click/tap isn't *also* treated as "open the sheet". */}
         <div className="flex min-w-0 items-center gap-3">
           <Cover id={track.id} url={track.cover_url} size={44} />
           <div className="min-w-0 flex-1">
             <div data-testid="now-title" className="truncate text-sm font-medium">{track.title}</div>
-            <Link href={`/artist/${track.artist.id}`} className="block truncate text-xs text-muted hover:text-fg hover:underline">
-              {track.artist.name}
-            </Link>
+            {/* Plain text, not a link: tapping anywhere on the bar - title or artist - opens Now
+                Playing, matching every mobile music app. A nested Link here would navigate away
+                instead, which is exactly the bug this replaced. */}
+            <div className="truncate text-xs text-muted">{track.artist.name}</div>
             {p.error && <div role="alert" data-testid="player-error" className="truncate text-xs text-danger">{p.error}</div>}
           </div>
-          <LikeButton trackId={track.id} />
+          <div onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+            <LikeButton trackId={track.id} />
+          </div>
         </div>
 
         <div className="flex flex-col items-center gap-1">
           <div className="flex items-center gap-1">
             {/* size-11 = 44px, the WCAG/Material minimum touch target; these are the most-tapped controls in the app */}
-            <button data-testid="prev" aria-label="Previous" onClick={p.prev} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg">
+            <button
+              data-testid="prev" aria-label="Previous" onClick={p.prev}
+              onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
+              className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg"
+            >
               <PrevIcon />
             </button>
             <button
               data-testid="play-toggle"
               aria-label={p.playing ? "Pause" : "Play"}
               onClick={p.toggle}
-              className="flex size-12 items-center justify-center rounded-full bg-fg text-ink hover:scale-105 active:scale-95"
+              onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
+              className="flex size-12 items-center justify-center rounded-full bg-fg text-ink transition-transform hover:scale-105 active:scale-95"
             >
               {p.playing ? <PauseIcon /> : <PlayIcon />}
             </button>
-            <button data-testid="next" aria-label="Next" onClick={p.next} disabled={!hasNext} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg disabled:opacity-30">
+            <button
+              data-testid="next" aria-label="Next" onClick={p.next} disabled={!hasNext}
+              onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
+              className="flex size-11 items-center justify-center rounded-full text-muted transition-opacity hover:text-fg disabled:opacity-30"
+            >
               <NextIcon />
             </button>
-            <button aria-label="Lyrics" data-testid="lyrics-toggle" onClick={() => p.setLyricsOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
-              <LyricsIcon />
-            </button>
-            <button aria-label="Queue" data-testid="queue-toggle" onClick={() => p.setQueueOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
-              <QueueIcon />
-            </button>
-            <button aria-label="Similar tracks" data-testid="similar-toggle" onClick={() => p.setSimilarOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg md:hidden">
-              <SimilarIcon />
-            </button>
           </div>
-          <div className="hidden w-full items-center gap-2 font-mono text-xs tabular-nums text-muted md:flex">
+          <div
+            onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
+            className="hidden w-full items-center gap-2 font-mono text-xs tabular-nums text-muted md:flex"
+          >
             <span data-testid="time-current" className="w-10 text-right">{formatTime(p.currentTime)}</span>
             <input
               data-testid="seek"
@@ -82,7 +109,10 @@ export default function PlayerBar() {
           </div>
         </div>
 
-        <div className="hidden items-center justify-end gap-3 md:flex">
+        <div
+          onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
+          className="hidden items-center justify-end gap-3 md:flex"
+        >
           <QualitySelect />
           <button aria-label={p.muted ? "Unmute" : "Mute"} onClick={p.toggleMute} className="flex size-9 items-center justify-center text-muted hover:text-fg">
             {p.muted || p.volume === 0 ? <MuteIcon /> : <VolumeIcon />}

@@ -1,28 +1,105 @@
 import { create } from "zustand";
+import { get as apiGet } from "@/lib/api";
 import type { Track } from "@/lib/types";
 
 export type Quality = "auto" | number; // number = kbps (96 / 160 / 320)
+export type RepeatMode = "off" | "all" | "one";
+export type ShuffleStyle = "standard" | "fewer_repeats";
 
 const PREFS_KEY = "listens.player";
 
-function loadPrefs(): { volume: number; quality: Quality } {
+interface Prefs {
+  volume: number;
+  quality: Quality;
+  monoAudio: boolean;
+  volumeNormalization: boolean;
+  crossfadeSeconds: number;
+  gaplessPlayback: boolean;
+  autoplaySimilar: boolean;
+  shuffleStyle: ShuffleStyle;
+  dataSaver: boolean;
+  defaultPlaylistPublic: boolean;
+  compactRows: boolean;
+  notifyPush: boolean;
+  notifyEmail: boolean;
+}
+
+const DEFAULT_PREFS: Prefs = {
+  volume: 0.8,
+  quality: "auto",
+  monoAudio: false,
+  volumeNormalization: false,
+  crossfadeSeconds: 0,
+  gaplessPlayback: true,
+  autoplaySimilar: true,
+  shuffleStyle: "standard",
+  dataSaver: false,
+  defaultPlaylistPublic: true,
+  compactRows: false,
+  notifyPush: true,
+  notifyEmail: true,
+};
+
+function loadPrefs(): Prefs {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
     return {
-      volume: typeof p.volume === "number" ? Math.min(1, Math.max(0, p.volume)) : 0.8,
-      quality: p.quality === "auto" || typeof p.quality === "number" ? p.quality : "auto",
+      volume: typeof p.volume === "number" ? Math.min(1, Math.max(0, p.volume)) : DEFAULT_PREFS.volume,
+      quality: p.quality === "auto" || typeof p.quality === "number" ? p.quality : DEFAULT_PREFS.quality,
+      monoAudio: typeof p.monoAudio === "boolean" ? p.monoAudio : DEFAULT_PREFS.monoAudio,
+      volumeNormalization: typeof p.volumeNormalization === "boolean" ? p.volumeNormalization : DEFAULT_PREFS.volumeNormalization,
+      crossfadeSeconds: typeof p.crossfadeSeconds === "number" ? Math.min(12, Math.max(0, p.crossfadeSeconds)) : DEFAULT_PREFS.crossfadeSeconds,
+      gaplessPlayback: typeof p.gaplessPlayback === "boolean" ? p.gaplessPlayback : DEFAULT_PREFS.gaplessPlayback,
+      autoplaySimilar: typeof p.autoplaySimilar === "boolean" ? p.autoplaySimilar : DEFAULT_PREFS.autoplaySimilar,
+      shuffleStyle: p.shuffleStyle === "fewer_repeats" ? "fewer_repeats" : DEFAULT_PREFS.shuffleStyle,
+      dataSaver: typeof p.dataSaver === "boolean" ? p.dataSaver : DEFAULT_PREFS.dataSaver,
+      defaultPlaylistPublic: typeof p.defaultPlaylistPublic === "boolean" ? p.defaultPlaylistPublic : DEFAULT_PREFS.defaultPlaylistPublic,
+      compactRows: typeof p.compactRows === "boolean" ? p.compactRows : DEFAULT_PREFS.compactRows,
+      notifyPush: typeof p.notifyPush === "boolean" ? p.notifyPush : DEFAULT_PREFS.notifyPush,
+      notifyEmail: typeof p.notifyEmail === "boolean" ? p.notifyEmail : DEFAULT_PREFS.notifyEmail,
     };
   } catch {
-    return { volume: 0.8, quality: "auto" };
+    return DEFAULT_PREFS;
   }
 }
 
-function savePrefs(volume: number, quality: Quality) {
+function savePrefs(p: Prefs) {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ volume, quality }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   } catch {
-    /* ignore */
+    /* ignore: storage unavailable (private mode) - prefs just won't survive a reload */
   }
+}
+
+/** Fisher-Yates: every order equally likely. */
+function plainShuffle<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** "Fewer repeats" style: greedily avoids placing two tracks by the same artist back to back
+ *  (falls back to picking randomly from the whole remaining pool once no other-artist track is
+ *  left). Not a guarantee for pathological inputs (e.g. one artist dominating the queue), just a
+ *  much better *typical* spread than a plain shuffle - same spirit as Phase 6's smart shuffle. */
+function smartShuffle(items: Track[]): Track[] {
+  const pool = [...items];
+  const out: Track[] = [];
+  let lastArtistId: string | null = null;
+  while (pool.length) {
+    let idx = pool.findIndex((t) => t.artist.id !== lastArtistId);
+    if (idx === -1) idx = 0;
+    // among same-artist-eligible candidates, still pick randomly (not just the first)
+    const candidates = pool.map((t, i) => i).filter((i) => pool[i].artist.id !== lastArtistId);
+    idx = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : Math.floor(Math.random() * pool.length);
+    const [picked] = pool.splice(idx, 1);
+    out.push(picked);
+    lastArtistId = picked.artist.id;
+  }
+  return out;
 }
 
 interface PlayerState {
@@ -40,11 +117,28 @@ interface PlayerState {
   queueOpen: boolean;
   lyricsOpen: boolean;
   similarOpen: boolean;
+  nowPlayingOpen: boolean;
+  shuffle: boolean;
+  preShuffleQueue: Track[] | null; // set while shuffle is on, so turning it off can restore order
+  repeatMode: RepeatMode;
   seekRequest: { to: number; n: number } | null;
   /** Set by whichever store action caused the most recent track change, read (and cleared)
    *  by PlayerEngine to tag the outgoing track's analytics event as a "skip" with a reason,
    *  vs. a natural play_end. Null means "no deliberate change happened" (e.g. first track). */
   lastSkipReason: string | null;
+
+  // --- Settings (frontend/src/app/(app)/profile/*), persisted to localStorage ---------------
+  monoAudio: boolean; // Playback: down-mix to a single channel (Web Audio, see PlayerEngine)
+  volumeNormalization: boolean; // Playback: a dynamics compressor evens out loud/quiet tracks
+  crossfadeSeconds: number; // Playback: fade out/in across a track boundary (0 = off, max 12s)
+  gaplessPlayback: boolean; // Playback: prefetch the next track more aggressively
+  autoplaySimilar: boolean; // Playback: keep playing similar tracks once the queue runs out
+  shuffleStyle: ShuffleStyle; // Playback: shuffle algorithm (see smartShuffle above)
+  dataSaver: boolean; // Data-saving: forces the lowest quality rendition
+  defaultPlaylistPublic: boolean; // Privacy: default visibility for newly created playlists
+  compactRows: boolean; // Content & display: denser track-list rows
+  notifyPush: boolean; // Notifications: local-only preference (no push infra exists yet)
+  notifyEmail: boolean; // Notifications: local-only preference (no email infra exists yet)
 
   playQueue: (tracks: Track[], startIndex?: number) => void;
   addToQueue: (track: Track) => void;
@@ -62,12 +156,35 @@ interface PlayerState {
   setQueueOpen: (open: boolean) => void;
   setLyricsOpen: (open: boolean) => void;
   setSimilarOpen: (open: boolean) => void;
+  setNowPlayingOpen: (open: boolean) => void;
+  toggleShuffle: () => void;
+  cycleRepeat: () => void;
+  setMonoAudio: (v: boolean) => void;
+  setVolumeNormalization: (v: boolean) => void;
+  setCrossfadeSeconds: (v: number) => void;
+  setGaplessPlayback: (v: boolean) => void;
+  setAutoplaySimilar: (v: boolean) => void;
+  setShuffleStyle: (v: ShuffleStyle) => void;
+  setDataSaver: (v: boolean) => void;
+  setDefaultPlaylistPublic: (v: boolean) => void;
+  setCompactRows: (v: boolean) => void;
+  setNotifyPush: (v: boolean) => void;
+  setNotifyEmail: (v: boolean) => void;
   // engine -> store
   setTime: (t: number) => void;
   setDuration: (d: number) => void;
   setBuffering: (b: boolean) => void;
   setError: (e: string | null) => void;
   setLevels: (l: number[]) => void;
+}
+
+function persistPrefs(s: PlayerState) {
+  savePrefs({
+    volume: s.volume, quality: s.quality, monoAudio: s.monoAudio, volumeNormalization: s.volumeNormalization,
+    crossfadeSeconds: s.crossfadeSeconds, gaplessPlayback: s.gaplessPlayback, autoplaySimilar: s.autoplaySimilar,
+    shuffleStyle: s.shuffleStyle, dataSaver: s.dataSaver, defaultPlaylistPublic: s.defaultPlaylistPublic,
+    compactRows: s.compactRows, notifyPush: s.notifyPush, notifyEmail: s.notifyEmail,
+  });
 }
 
 export const usePlayer = create<PlayerState>((set, get) => ({
@@ -78,15 +195,18 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   duration: 0,
   buffering: false,
   error: null,
-  volume: 0.8,
   muted: false,
-  quality: "auto",
   levels: [],
   queueOpen: false,
   lyricsOpen: false,
   similarOpen: false,
+  nowPlayingOpen: false,
+  shuffle: false,
+  preShuffleQueue: null,
+  repeatMode: "off",
   seekRequest: null,
   lastSkipReason: null,
+  ...DEFAULT_PREFS,
 
   playQueue: (tracks, startIndex = 0) =>
     set((s) => {
@@ -114,12 +234,31 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }),
   jumpTo: (i) =>
     set((s) => (i >= 0 && i < s.queue.length ? { index: i, playing: true, currentTime: 0, error: null, lastSkipReason: "track_select" } : s)),
-  next: () =>
-    set((s) =>
-      s.index + 1 < s.queue.length
-        ? { index: s.index + 1, playing: true, currentTime: 0, error: null, lastSkipReason: "next_button" }
-        : { playing: false }, // end of queue: stop
-    ),
+  next: () => {
+    const s = get();
+    if (s.index + 1 < s.queue.length) {
+      set({ index: s.index + 1, playing: true, currentTime: 0, error: null, lastSkipReason: "next_button" });
+      return;
+    }
+    if (s.repeatMode === "all" && s.queue.length) {
+      set({ index: 0, playing: true, currentTime: 0, error: null, lastSkipReason: "next_button" });
+      return;
+    }
+    const last = s.queue[s.queue.length - 1];
+    if (s.autoplaySimilar && last) {
+      apiGet<Track[]>(`/api/catalogue/tracks/${last.id}/similar`)
+        .then((similar) => {
+          if (!similar.length) {
+            set({ playing: false });
+            return;
+          }
+          set((s2) => ({ queue: [...s2.queue, ...similar], index: s2.index + 1, playing: true, currentTime: 0, error: null, lastSkipReason: "next_button" }));
+        })
+        .catch(() => set({ playing: false }));
+      return;
+    }
+    set({ playing: false }); // end of queue: stop
+  },
   prev: () => {
     const s = get();
     // like most players: past the first 3 s "previous" restarts the track instead of going back
@@ -131,17 +270,83 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   requestSeek: (to) => set((s) => ({ seekRequest: { to, n: (s.seekRequest?.n ?? 0) + 1 }, currentTime: to })),
   setVolume: (volume) => {
     set({ volume, muted: false });
-    savePrefs(volume, get().quality);
+    persistPrefs(get());
   },
   toggleMute: () => set((s) => ({ muted: !s.muted })),
   setQuality: (quality) => {
     set({ quality });
-    savePrefs(get().volume, quality);
+    persistPrefs(get());
   },
   // Mutually exclusive: all three are fixed inset-y-0 side panels, so more than one open at once would overlap.
   setQueueOpen: (queueOpen) => set({ queueOpen, lyricsOpen: queueOpen ? false : get().lyricsOpen, similarOpen: queueOpen ? false : get().similarOpen }),
   setLyricsOpen: (lyricsOpen) => set({ lyricsOpen, queueOpen: lyricsOpen ? false : get().queueOpen, similarOpen: lyricsOpen ? false : get().similarOpen }),
   setSimilarOpen: (similarOpen) => set({ similarOpen, queueOpen: similarOpen ? false : get().queueOpen, lyricsOpen: similarOpen ? false : get().lyricsOpen }),
+  // Independent of the three above: the mobile full-screen "Now Playing" sheet sits *below*
+  // them in z-order, so opening Queue/Lyrics/Similar from inside it just layers on top.
+  setNowPlayingOpen: (nowPlayingOpen) => set({ nowPlayingOpen }),
+  toggleShuffle: () =>
+    set((s) => {
+      if (s.shuffle) {
+        // restore the pre-shuffle order, keeping whatever's currently playing as current
+        const restored = s.preShuffleQueue ?? s.queue;
+        const current = s.queue[s.index];
+        const newIndex = current ? restored.findIndex((t) => t.id === current.id) : s.index;
+        return { shuffle: false, queue: restored, index: newIndex < 0 ? s.index : newIndex, preShuffleQueue: null };
+      }
+      // shuffle only the upcoming portion - history and the current track stay put
+      const before = s.queue.slice(0, s.index + 1);
+      const after = s.queue.slice(s.index + 1);
+      const shuffled = s.shuffleStyle === "fewer_repeats" ? smartShuffle(after) : plainShuffle(after);
+      return { shuffle: true, preShuffleQueue: s.queue, queue: [...before, ...shuffled] };
+    }),
+  cycleRepeat: () =>
+    set((s) => ({ repeatMode: s.repeatMode === "off" ? "all" : s.repeatMode === "all" ? "one" : "off" })),
+  setMonoAudio: (monoAudio) => {
+    set({ monoAudio });
+    persistPrefs(get());
+  },
+  setVolumeNormalization: (volumeNormalization) => {
+    set({ volumeNormalization });
+    persistPrefs(get());
+  },
+  setCrossfadeSeconds: (crossfadeSeconds) => {
+    set({ crossfadeSeconds: Math.min(12, Math.max(0, crossfadeSeconds)) });
+    persistPrefs(get());
+  },
+  setGaplessPlayback: (gaplessPlayback) => {
+    set({ gaplessPlayback });
+    persistPrefs(get());
+  },
+  setAutoplaySimilar: (autoplaySimilar) => {
+    set({ autoplaySimilar });
+    persistPrefs(get());
+  },
+  setShuffleStyle: (shuffleStyle) => {
+    set({ shuffleStyle });
+    persistPrefs(get());
+  },
+  setDataSaver: (dataSaver) => {
+    // Data saver takes effect immediately, like a real one would - it wouldn't be much of a
+    // "saver" if it only applied starting with your next manual quality change.
+    set({ dataSaver, quality: dataSaver ? 96 : get().quality });
+    persistPrefs(get());
+  },
+  setDefaultPlaylistPublic: (defaultPlaylistPublic) => {
+    set({ defaultPlaylistPublic });
+    persistPrefs(get());
+  },
+  setCompactRows: (compactRows) => {
+    set({ compactRows });
+    persistPrefs(get());
+  },
+  setNotifyPush: (notifyPush) => {
+    set({ notifyPush });
+    persistPrefs(get());
+  },
+  setNotifyEmail: (notifyEmail) => {
+    set({ notifyEmail });
+    persistPrefs(get());
+  },
   setTime: (currentTime) => set({ currentTime }),
   setDuration: (duration) => set({ duration }),
   setBuffering: (buffering) => set({ buffering }),
@@ -151,8 +356,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
 export const currentTrack = (s: PlayerState): Track | null => (s.index >= 0 ? s.queue[s.index] ?? null : null);
 
-/** Call once on the client to restore saved volume/quality. */
+/** Call once on the client to restore saved preferences. */
 export function hydratePlayerPrefs() {
-  const { volume, quality } = loadPrefs();
-  usePlayer.setState({ volume, quality });
+  usePlayer.setState(loadPrefs());
 }

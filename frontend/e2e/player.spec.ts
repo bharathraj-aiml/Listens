@@ -50,7 +50,9 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await page.getByTestId("rights").check();
   await page.getByTestId("upload-submit").click();
   const rows = page.getByTestId("track-row");
-  await expect(rows).toHaveCount(2);
+  // Uploads happen one at a time (see upload/page.tsx), each a real PUT to Backblaze B2 - allow
+  // enough wall-clock time for both sequential uploads to complete over a real network hop.
+  await expect(rows).toHaveCount(2, { timeout: 60_000 });
   await expect(page.getByTestId("track-status")).toHaveText(["Ready", "Ready"], { timeout: 90_000 });
 
   // --- play from the artist page -------------------------------------------------------------------
@@ -65,7 +67,13 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await expect(newUploads.getByTestId("track-row").filter({ hasText: A })).toHaveCount(1);
   await expect(newUploads.getByTestId("track-row").filter({ hasText: B })).toHaveCount(1);
   await expect(page.getByTestId("player-bar")).toHaveCount(0); // nothing playing yet
-  await newUploads.getByTestId("track-row").filter({ hasText: A }).getByText(`E2E Band ${run}`).click();
+  // Track rows no longer link to the artist page (clicking anywhere on a row just plays it -
+  // the artist page is reached through its own nav elsewhere), so fetch the artist id directly.
+  const artistId: string = await page.evaluate(async () => {
+    const r = await fetch("/api/catalogue/tracks/mine", { headers: { Authorization: `Bearer ${JSON.parse(localStorage.getItem("listens.auth")!).access}` } });
+    return (await r.json())[0].artist.id;
+  });
+  await page.goto(`/artist/${artistId}`);
   await expect(page.getByTestId("page-title")).toHaveText(`E2E Band ${run}`);
   await expect(page.getByTestId("track-row")).toHaveCount(2); // exactly this run's two tracks
   await page.getByRole("button", { name: `Play ${A}`, exact: true }).click();
@@ -175,9 +183,11 @@ test("register, upload, stream, control the player, search, persist", async ({ p
   await page.getByTestId("search-input").fill("zzzznothing");
   await expect(page.getByTestId("no-results")).toBeVisible();
 
-  // --- session survives a reload, then sign out ------------------------------------------------------------------------
+  // --- session survives a reload, then sign out (Profile -> Settings -> Log out) ------------------------
   await page.reload();
   await expect(page.getByTestId("whoami")).toHaveText(`@${user}`);
+  await page.getByRole("link", { name: "Profile" }).first().click();
+  await page.getByRole("link", { name: "Settings and privacy" }).click();
   await page.getByTestId("logout").click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goto("/upload");

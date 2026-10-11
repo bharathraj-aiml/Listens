@@ -1,6 +1,8 @@
 import {
-  CaretDown, CaretUp, ChartBar, Heart, House, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus, Queue,
-  SkipBack, SkipForward, Sparkle, SpeakerHigh, SpeakerX, TextAlignLeft, Trash, UploadSimple, X,
+  Bell, CaretDown, CaretRight, CaretUp, ChartBar, ChartLineUp, ClockCounterClockwise, CloudArrowDown, DeviceMobile, Disc,
+  Gear, Heart, House, IdentificationCard, Info, Lock, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus,
+  Queue, Repeat, RepeatOnce, Shuffle, SkipBack, SkipForward, SlidersHorizontal, Sparkle, SpeakerHigh, SpeakerX,
+  TextAlignLeft, Trash, UploadSimple, UserCircle, Waveform, X,
   type Icon, type IconProps,
 } from "@phosphor-icons/react";
 
@@ -31,5 +33,22 @@ export const EditIcon = wrap(PencilSimple);
 export const TrashIcon = wrap(Trash);
 export const CaretUpIcon = wrap(CaretUp);
 export const CaretDownIcon = wrap(CaretDown);
+export const CaretRightIcon = wrap(CaretRight);
 export const AnalyticsIcon = wrap(ChartBar);
 export const SimilarIcon = wrap(Sparkle);
+export const ProfileIcon = wrap(UserCircle);
+export const ShuffleIcon = wrap(Shuffle);
+export const RepeatIcon = wrap(Repeat);
+export const RepeatOnceIcon = wrap(RepeatOnce);
+export const AccountIcon = wrap(IdentificationCard);
+export const ContentDisplayIcon = wrap(SlidersHorizontal);
+export const PrivacyIcon = wrap(Lock);
+export const PlaybackIcon = wrap(Waveform);
+export const NotificationsIcon = wrap(Bell);
+export const DevicesIcon = wrap(DeviceMobile);
+export const DataSavingIcon = wrap(CloudArrowDown);
+export const AboutIcon = wrap(Info);
+export const SettingsIcon = wrap(Gear);
+export const RecentsIcon = wrap(ClockCounterClockwise);
+export const StatsIcon = wrap(ChartLineUp);
+export const AlbumIcon = wrap(Disc);

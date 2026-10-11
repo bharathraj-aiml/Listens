@@ -1,10 +1,12 @@
-"""Simple, per-user listening analytics, read straight from `play_events`.
+"""Per-user listening stats and recent-days history, read straight from `play_events`.
 
 A "stream" only counts once a track has actually played for a while - a `play_end` with
 `ms_played >= STREAM_THRESHOLD_MS` - not every tap on a row. Short accidental plays and
-scrubbing around don't inflate anyone's "top tracks".
+scrubbing around don't inflate anyone's "top track".
 """
 import uuid
+from datetime import UTC, date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -13,16 +15,15 @@ from sqlalchemy.orm import Session
 
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
-from listens_common.models import PlayEvent, Track
+from listens_common.models import Artist, PlayEvent, Track
 from listens_common.web import current_user_id
 
-from .schemas import TrackOut
+from .schemas import ArtistRef, TrackOut
 from .serialize import track_out
 
 router = APIRouter()
 
 STREAM_THRESHOLD_MS = 30_000
-MIN_PLAYS_FOR_SKIP_RATE = 2  # one play + one skip would otherwise show as a meaningless 100%
 
 
 class TopTrackOut(BaseModel):
@@ -30,73 +31,100 @@ class TopTrackOut(BaseModel):
     stream_count: int
 
 
-class SkipRateOut(BaseModel):
-    track: TrackOut
+class TopArtistOut(BaseModel):
+    artist: ArtistRef
     play_count: int
-    skip_count: int
-    skip_rate: float  # 0..1
 
 
-class HourBucket(BaseModel):
-    hour: int  # 0-23, UTC
-    count: int
+class ListeningStatsOut(BaseModel):
+    range: Literal["this_week", "last_week"]
+    start: date
+    end: date
+    top_artist: TopArtistOut | None
+    top_track: TopTrackOut | None
 
 
-@router.get("/analytics/top-tracks", response_model=list[TopTrackOut])
-def top_tracks(
-    limit: int = Query(20, ge=1, le=100), user_id: uuid.UUID = Depends(current_user_id),
+class RecentsDayOut(BaseModel):
+    day: date
+    play_count: int
+    cover_track: TrackOut | None  # the day's most-played track, used as a representative cover
+
+
+def _week_bounds(range_: str) -> tuple[date, date]:
+    """Monday-Sunday, like most "this week / last week" UIs (including the one this mirrors)."""
+    today = datetime.now(UTC).date()
+    monday_this_week = today - timedelta(days=today.isoweekday() - 1)
+    start = monday_this_week if range_ == "this_week" else monday_this_week - timedelta(days=7)
+    return start, start + timedelta(days=6)
+
+
+@router.get("/analytics/listening-stats", response_model=ListeningStatsOut)
+def listening_stats(
+    range: Literal["this_week", "last_week"] = Query("this_week"),
+    user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
-) -> list[TopTrackOut]:
-    rows = db.execute(
+) -> ListeningStatsOut:
+    start, end = _week_bounds(range)
+    start_dt = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
+    end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC)  # exclusive
+
+    artist_row = db.execute(
+        select(Track.artist_id, func.count().label("n"))
+        .join(PlayEvent, PlayEvent.track_id == Track.id)
+        .where(
+            PlayEvent.user_id == user_id, PlayEvent.event_type == "play_start",
+            PlayEvent.occurred_at >= start_dt, PlayEvent.occurred_at < end_dt,
+        )
+        .group_by(Track.artist_id).order_by(func.count().desc()).limit(1)
+    ).first()
+    top_artist = None
+    if artist_row and (artist := db.get(Artist, artist_row.artist_id)):
+        top_artist = TopArtistOut(artist=ArtistRef(id=artist.id, name=artist.name), play_count=artist_row.n)
+
+    track_row = db.execute(
         select(PlayEvent.track_id, func.count().label("n"))
-        .where(PlayEvent.user_id == user_id, PlayEvent.event_type == "play_end", PlayEvent.ms_played >= STREAM_THRESHOLD_MS)
-        .group_by(PlayEvent.track_id).order_by(func.count().desc()).limit(limit)
-    ).all()
-    tracks = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_([r.track_id for r in rows]))).unique()}
-    return [
-        TopTrackOut(track=track_out(tracks[r.track_id], settings, user_id), stream_count=r.n)
-        for r in rows if r.track_id in tracks
-    ]
+        .where(
+            PlayEvent.user_id == user_id, PlayEvent.event_type == "play_end", PlayEvent.ms_played >= STREAM_THRESHOLD_MS,
+            PlayEvent.occurred_at >= start_dt, PlayEvent.occurred_at < end_dt,
+        )
+        .group_by(PlayEvent.track_id).order_by(func.count().desc()).limit(1)
+    ).first()
+    top_track = None
+    if track_row and (t := db.get(Track, track_row.track_id)):
+        top_track = TopTrackOut(track=track_out(t, settings, user_id), stream_count=track_row.n)
+
+    return ListeningStatsOut(range=range, start=start, end=end, top_artist=top_artist, top_track=top_track)
 
 
-@router.get("/analytics/skip-rate", response_model=list[SkipRateOut])
-def skip_rate(
-    limit: int = Query(20, ge=1, le=100), user_id: uuid.UUID = Depends(current_user_id),
+@router.get("/analytics/recents", response_model=list[RecentsDayOut])
+def recents(
+    days: int = Query(14, ge=1, le=90), user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
-) -> list[SkipRateOut]:
-    plays = dict(db.execute(
-        select(PlayEvent.track_id, func.count()).where(PlayEvent.user_id == user_id, PlayEvent.event_type == "play_start")
-        .group_by(PlayEvent.track_id)
-    ).all())
-    skips = dict(db.execute(
-        select(PlayEvent.track_id, func.count()).where(PlayEvent.user_id == user_id, PlayEvent.event_type == "skip")
-        .group_by(PlayEvent.track_id)
-    ).all())
-    eligible = [tid for tid, n in plays.items() if n >= MIN_PLAYS_FOR_SKIP_RATE]
-    eligible.sort(key=lambda tid: skips.get(tid, 0) / plays[tid], reverse=True)
-    eligible = eligible[:limit]
+) -> list[RecentsDayOut]:
+    """Per-day play counts, newest first, each day's "cover" being its most-played track that day."""
+    day_expr = func.date(PlayEvent.occurred_at)
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = db.execute(
+        select(day_expr.label("day"), PlayEvent.track_id, func.count().label("n"))
+        .where(PlayEvent.user_id == user_id, PlayEvent.event_type == "play_start", PlayEvent.occurred_at >= since)
+        .group_by("day", PlayEvent.track_id)
+    ).all()
 
-    tracks = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_(eligible))).unique()}
+    by_day: dict[date, dict[uuid.UUID, int]] = {}
+    for day, track_id, n in rows:
+        # Postgres' func.date() returns a date; SQLite's returns an ISO "YYYY-MM-DD" string.
+        d = day if isinstance(day, date) else datetime.strptime(day, "%Y-%m-%d").date()
+        by_day.setdefault(d, {})[track_id] = by_day.get(d, {}).get(track_id, 0) + n
+
+    track_ids = {tid for counts in by_day.values() for tid in counts}
+    tracks = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_(track_ids))).unique()}
+
     out = []
-    for tid in eligible:
-        t = tracks.get(tid)
-        if not t:
-            continue
-        play_count, skip_count = plays[tid], skips.get(tid, 0)
-        out.append(SkipRateOut(
-            track=track_out(t, settings, user_id), play_count=play_count, skip_count=skip_count,
-            skip_rate=round(skip_count / play_count, 4),
+    for d, counts in sorted(by_day.items(), reverse=True):
+        top_tid = max(counts, key=lambda tid: counts[tid])
+        cover_track = tracks.get(top_tid)
+        out.append(RecentsDayOut(
+            day=d, play_count=sum(counts.values()),
+            cover_track=track_out(cover_track, settings, user_id) if cover_track else None,
         ))
     return out
-
-
-@router.get("/analytics/listening-by-hour", response_model=list[HourBucket])
-def listening_by_hour(user_id: uuid.UUID = Depends(current_user_id), db: Session = Depends(get_db)) -> list[HourBucket]:
-    hour = func.extract("hour", PlayEvent.occurred_at)
-    rows = db.execute(
-        select(hour.label("hour"), func.count())
-        .where(PlayEvent.user_id == user_id, PlayEvent.event_type == "play_start")
-        .group_by(hour)
-    ).all()
-    counts = {int(h): n for h, n in rows}
-    return [HourBucket(hour=h, count=counts.get(h, 0)) for h in range(24)]

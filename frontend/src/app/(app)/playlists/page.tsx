@@ -6,6 +6,7 @@ import Cover from "@/components/Cover";
 import { PlusIcon } from "@/components/icons";
 import { get, post } from "@/lib/api";
 import type { Playlist } from "@/lib/types";
+import { usePlayer } from "@/store/player";
 
 export default function PlaylistsPage() {
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
@@ -13,6 +14,7 @@ export default function PlaylistsPage() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const defaultPlaylistPublic = usePlayer((s) => s.defaultPlaylistPublic);
 
   const refresh = () => get<Playlist[]>("/api/catalogue/playlists/mine").then(setPlaylists).catch((e) => setError(e.message));
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -22,7 +24,8 @@ export default function PlaylistsPage() {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      await post("/api/catalogue/playlists", { name: name.trim(), is_public: false, is_collaborative: false });
+      // Visibility default comes from Settings -> Privacy and social (see store/player.ts).
+      await post("/api/catalogue/playlists", { name: name.trim(), is_public: defaultPlaylistPublic, is_collaborative: false });
       setName("");
       setCreating(false);
       refresh();

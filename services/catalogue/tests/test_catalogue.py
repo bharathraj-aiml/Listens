@@ -47,6 +47,16 @@ def test_get_track_visibility_and_cover_url(env):
     assert t["cover_url"].startswith("/api/stream/cover/")
 
 
+def test_cover_url_is_stable_across_requests_so_the_browser_can_cache_it(env):
+    # Same track, same user, two separate requests a moment apart: the signed cover token must
+    # be byte-for-byte identical, or the browser can never cache the (unchanging) image - it'd
+    # see a "new" URL on every single list/page that shows this track and re-download every time.
+    rid, *_ = seed(env, "r", cover=True)
+    first = env.client.get(f"/tracks/{rid}", headers=env.headers).json()["cover_url"]
+    second = env.client.get(f"/tracks/{rid}", headers=env.headers).json()["cover_url"]
+    assert first == second
+
+
 def test_artist_and_album_pages(env):
     t1, art, alb = seed(env, "One", "Band", "LP")
     seed(env, "Two", "Band", "LP")
@@ -56,6 +66,19 @@ def test_artist_and_album_pages(env):
     b = env.client.get(f"/albums/{alb}", headers=env.headers).json()
     assert b["title"] == "LP" and b["artist"]["name"] == "Band" and len(b["tracks"]) == 2
     assert env.client.get(f"/artists/{uuid.uuid4()}", headers=env.headers).status_code == 404
+
+
+def test_list_albums_groups_tracks_and_skips_unready_only_albums(env):
+    seed(env, "One", "Band", "LP")
+    seed(env, "Two", "Band", "LP")
+    seed(env, "Solo", "Band")  # no album: must not appear
+    seed(env, "Unreleased", "Band", "Lost Tapes", status="processing")  # no ready tracks: must not appear
+
+    out = env.client.get("/albums", headers=env.headers).json()
+    titles = {a["title"] for a in out}
+    assert titles == {"LP"}
+    lp = next(a for a in out if a["title"] == "LP")
+    assert lp["artist"]["name"] == "Band" and lp["track_count"] == 2
 
 
 def test_delete_track_removes_objects_and_enforces_owner(env):

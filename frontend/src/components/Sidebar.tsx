@@ -1,37 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { AnalyticsIcon, HomeIcon, PlaylistIcon, SearchIcon, UploadIcon } from "@/components/icons";
+import { usePathname } from "next/navigation";
+import { AlbumIcon, HomeIcon, PlaylistIcon, ProfileIcon, SearchIcon, UploadIcon } from "@/components/icons";
 import { Logo } from "@/components/Logo";
-import { post } from "@/lib/api";
 import { useAuth } from "@/store/auth";
-import { usePlayer } from "@/store/player";
 
 const NAV = [
   { href: "/", label: "Home", Icon: HomeIcon },
   { href: "/search", label: "Search", Icon: SearchIcon },
   { href: "/playlists", label: "Playlists", Icon: PlaylistIcon },
+  { href: "/albums", label: "Albums", Icon: AlbumIcon },
   { href: "/upload", label: "Upload", Icon: UploadIcon },
-  { href: "/analytics", label: "Analytics", Icon: AnalyticsIcon },
+  { href: "/profile", label: "Profile", Icon: ProfileIcon },
 ];
 
+/** Just navigation: sign-out lives inside /profile now, not duplicated here too. */
 export default function Sidebar() {
   const path = usePathname();
-  const router = useRouter();
-  const { user, refreshToken, clear } = useAuth();
-
-  async function logout() {
-    try {
-      if (refreshToken) await post("/api/auth/logout", { refresh_token: refreshToken }, false);
-    } catch {
-      /* logging out locally is enough if the server is unreachable */
-    }
-    usePlayer.getState().playQueue([]);
-    clear();
-    router.replace("/login");
-  }
-
+  const { user } = useAuth();
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
 
   return (
@@ -47,20 +34,16 @@ export default function Sidebar() {
             </li>
           ))}
         </ul>
-        <div className="mt-auto border-t border-line pt-4 text-sm">
-          <div className="truncate text-muted" data-testid="whoami">{user ? `@${user.username}` : ""}</div>
-          <button onClick={logout} data-testid="logout" className="mt-2 text-muted hover:text-fg">Sign out</button>
-        </div>
+        <div className="mt-auto truncate border-t border-line pt-4 text-sm text-muted" data-testid="whoami">{user ? `@${user.username}` : ""}</div>
       </nav>
 
       {/* mobile: bottom tab bar */}
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 flex h-14 border-t border-line bg-panel md:hidden">
         {NAV.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} className={`flex flex-1 flex-col items-center justify-center gap-0.5 text-xs ${active(href) ? "text-accent" : "text-muted"}`}>
+          <Link key={href} href={href} className={`flex flex-1 flex-col items-center justify-center gap-0.5 text-xs transition-colors active:scale-95 ${active(href) ? "text-accent" : "text-muted"}`}>
             <Icon /> {label}
           </Link>
         ))}
-        <button onClick={logout} className="flex flex-1 flex-col items-center justify-center text-xs text-muted">Sign out</button>
       </nav>
     </>
   );

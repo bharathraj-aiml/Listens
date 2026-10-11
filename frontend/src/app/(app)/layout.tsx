@@ -1,8 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import LyricsPanel from "@/components/LyricsPanel";
+import NowPlayingSheet from "@/components/NowPlayingSheet";
 import PlayerBar from "@/components/PlayerBar";
 import PlayerEngine from "@/components/PlayerEngine";
 import QueuePanel from "@/components/QueuePanel";
@@ -19,6 +20,7 @@ import { useLikes } from "@/store/likes";
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { ready, accessToken, user, load, setUser } = useAuth();
   const loadLikes = useLikes((s) => s.load);
 
@@ -38,8 +40,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh md:pl-60">
       <Sidebar />
-      <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">
+        <div key={pathname} className="animate-fade-in">{children}</div>
+      </main>
       <PlayerBar />
+      <NowPlayingSheet />
       <QueuePanel />
       <LyricsPanel />
       <SimilarTracksPanel />

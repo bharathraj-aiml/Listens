@@ -37,9 +37,13 @@ test("client fires play_start and a correctly-reasoned skip event", async ({ pag
   await page.getByTestId("upload-submit").click();
   await expect(page.getByTestId("track-status")).toHaveText(["Ready", "Ready"], { timeout: 60_000 });
 
-  await page.getByRole("link", { name: "Home" }).first().click();
-  const newUploads = page.getByRole("region", { name: "New uploads" });
-  await newUploads.getByTestId("track-row").filter({ hasText: A }).getByText("Ev Test Band").click();
+  // Track rows no longer link to the artist page (clicking anywhere on a row just plays it -
+  // the artist page is reached through its own nav elsewhere), so fetch the artist id directly.
+  const artistId: string = await page.evaluate(async () => {
+    const r = await fetch("/api/catalogue/tracks/mine", { headers: { Authorization: `Bearer ${JSON.parse(localStorage.getItem("listens.auth")!).access}` } });
+    return (await r.json())[0].artist.id;
+  });
+  await page.goto(`/artist/${artistId}`);
   await expect(page.getByTestId("page-title")).toHaveText("Ev Test Band");
   const rows = page.getByTestId("track-row");
   await expect(rows).toHaveCount(2);
@@ -57,7 +61,10 @@ test("client fires play_start and a correctly-reasoned skip event", async ({ pag
   const startReq = await playStart;
   expect(startReq.postDataJSON().track_id).toBeTruthy();
 
-  await page.waitForTimeout(1500); // accumulate a little real playback time before skipping
+  // Accumulate a little real playback time before skipping - master/variant/segment all fetch
+  // from Backblaze B2 now (a real network hop, not co-located MinIO), so give playback enough
+  // time to actually start before asserting it advanced.
+  await page.waitForTimeout(4000);
 
   // clicking Next must close out the first track as a "skip" with reason "next_button",
   // carrying its playback position
@@ -72,7 +79,7 @@ test("client fires play_start and a correctly-reasoned skip event", async ({ pag
   expect(skip.position_ms).toBeGreaterThan(0);
 });
 
-test("analytics page renders seeded top tracks, skip rate, and listening-by-hour", async ({ page, request }) => {
+test("Profile's Listening stats and Recents render seeded play data", async ({ page, request }) => {
   const dir = mkdtempSync(path.join(tmpdir(), "listens-ev-e2e2-"));
   const u = `ev2_${run}`;
   const file = tone(dir, `AnalyticsTrack${run}`, 300);
@@ -98,27 +105,21 @@ test("analytics page renders seeded top tracks, skip rate, and listening-by-hour
   });
 
   const headers = { Authorization: `Bearer ${token}` };
-  // 2 verified streams (>= 30s) for top-tracks; 3 plays + 1 skip for a 33% skip rate
+  await request.post("/api/catalogue/events", { headers, data: { event_type: "play_start", track_id: trackId } });
   await request.post("/api/catalogue/events", { headers, data: { event_type: "play_end", track_id: trackId, ms_played: 40_000 } });
-  await request.post("/api/catalogue/events", { headers, data: { event_type: "play_end", track_id: trackId, ms_played: 35_000 } });
-  await request.post("/api/catalogue/events", { headers, data: { event_type: "play_start", track_id: trackId } });
-  await request.post("/api/catalogue/events", { headers, data: { event_type: "play_start", track_id: trackId } });
-  await request.post("/api/catalogue/events", { headers, data: { event_type: "play_start", track_id: trackId } });
-  await request.post("/api/catalogue/events", { headers, data: { event_type: "skip", track_id: trackId, position_ms: 2000, reason: "next_button" } });
 
   // give the events consumer a moment to drain the stream into Postgres
   await expect(async () => {
-    const r = await request.get("/api/catalogue/analytics/top-tracks", { headers });
+    const r = await request.get("/api/catalogue/analytics/recents", { headers });
     expect((await r.json()).length).toBeGreaterThan(0);
   }).toPass({ timeout: 10_000 });
 
-  await page.getByRole("link", { name: "Analytics" }).first().click();
-  await expect(page.getByTestId("top-tracks-row")).toHaveCount(1);
-  await expect(page.getByTestId("top-tracks-row")).toContainText("2 streams");
-  await expect(page.getByTestId("skip-rate-row")).toHaveCount(1);
-  await expect(page.getByTestId("skip-rate-row")).toContainText("33%");
-  const bars = page.getByTestId("hour-bar");
-  await expect(bars).toHaveCount(24);
-  const nonZero = await bars.evaluateAll((els) => els.filter((e) => Number(e.getAttribute("data-count")) > 0).length);
-  expect(nonZero).toBeGreaterThan(0);
+  await page.getByRole("link", { name: "Profile" }).first().click();
+  await page.getByRole("link", { name: "Listening stats" }).click();
+  await expect(page.getByText(`AnalyticsTrack${run}`)).toBeVisible();
+
+  await page.goBack();
+  await page.getByRole("link", { name: "Recents" }).click();
+  await expect(page.getByText("Today")).toBeVisible();
+  await expect(page.getByText("1 song played")).toBeVisible();
 });

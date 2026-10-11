@@ -1,4 +1,6 @@
-function hue(id: string) {
+/** Deterministic per-id hue, so a track's placeholder gradient (and NowPlayingSheet's ambient
+ *  background wash, for tracks without cover art) is stable rather than re-randomizing. */
+export function hue(id: string) {
   let h = 0;
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 360;
   return h;

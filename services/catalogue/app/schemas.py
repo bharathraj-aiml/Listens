@@ -60,6 +60,14 @@ class AlbumHit(BaseModel):
     artist: ArtistRef
 
 
+class AlbumCardOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    artist: ArtistRef
+    cover_url: str | None
+    track_count: int
+
+
 class PlaylistHit(BaseModel):
     id: uuid.UUID
     name: str

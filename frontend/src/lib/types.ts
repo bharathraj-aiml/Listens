@@ -79,14 +79,29 @@ export interface TopTrack {
   stream_count: number;
 }
 
-export interface SkipRateEntry {
-  track: Track;
+export interface TopArtist {
+  artist: ArtistRef;
   play_count: number;
-  skip_count: number;
-  skip_rate: number;
 }
 
-export interface HourBucket {
-  hour: number;
-  count: number;
+export interface ListeningStats {
+  range: "this_week" | "last_week";
+  start: string;
+  end: string;
+  top_artist: TopArtist | null;
+  top_track: TopTrack | null;
+}
+
+export interface AlbumCard {
+  id: string;
+  title: string;
+  artist: ArtistRef;
+  cover_url: string | null;
+  track_count: number;
+}
+
+export interface RecentsDay {
+  day: string;
+  play_count: number;
+  cover_track: Track | null;
 }

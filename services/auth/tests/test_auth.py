@@ -105,5 +105,27 @@ def test_refresh_tokens_have_ttl_in_redis(client, tokens):
     assert 0 < client.redis.ttl(keys[0]) <= 7 * 86400
 
 
+def test_session_count_tracks_logins_and_refresh_rotation(client, tokens):
+    assert client.get("/me/sessions", headers=auth(tokens)).json()["count"] == 1
+    new = client.post("/refresh", json={"refresh_token": tokens["refresh_token"]}).json()
+    # rotation replaces the old jti in the set, not adds to it
+    assert client.get("/me/sessions", headers=auth(new)).json()["count"] == 1
+    r2 = client.post("/login", json={"identifier": "ada_l", "password": USER["password"]})
+    assert client.get("/me/sessions", headers=auth(r2.json())).json()["count"] == 2
+
+
+def test_revoke_all_sessions_kills_every_refresh_token_including_the_caller(client, tokens):
+    second = client.post("/login", json={"identifier": "ada_l", "password": USER["password"]}).json()
+    assert client.post("/me/sessions/revoke-all", headers=auth(tokens)).status_code == 204
+    assert client.post("/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
+    assert client.post("/refresh", json={"refresh_token": second["refresh_token"]}).status_code == 401
+    assert client.get("/me/sessions", headers=auth(tokens)).json()["count"] == 0
+
+
+def test_sessions_endpoints_require_auth(client):
+    assert client.get("/me/sessions").status_code == 401
+    assert client.post("/me/sessions/revoke-all").status_code == 401
+
+
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}

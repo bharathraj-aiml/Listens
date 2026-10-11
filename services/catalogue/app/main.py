@@ -21,7 +21,8 @@ from .analytics import router as analytics_router
 from .events import router as events_router
 from .library import router as library_router
 from .schemas import (
-    AlbumDetail, AlbumHit, AlbumRef, ArtistDetail, ArtistRef, LyricsOut, PlaylistHit, SearchOut, TrackOut, UploadOut,
+    AlbumCardOut, AlbumDetail, AlbumHit, AlbumRef, ArtistDetail, ArtistRef, LyricsOut, PlaylistHit, SearchOut,
+    TrackOut, UploadOut,
 )
 from .serialize import track_out
 from .tags import read_lyrics, read_tags
@@ -277,6 +278,35 @@ def get_artist(
         id=artist.id, name=artist.name, bio=artist.bio, followed=followed,
         tracks=[track_out(t, settings, user_id) for t in tracks],
     )
+
+
+@app.get("/albums", response_model=list[AlbumCardOut])
+def list_albums(
+    user_id: uuid.UUID = Depends(current_user_id),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[AlbumCardOut]:
+    """Every album that has at least one ready track, grouped from track metadata at upload
+    time (see _find_or_create_album) - there's no separate "create an album" step; tagging a
+    batch of uploads with the same album name (e.g. a movie soundtrack) is what creates one."""
+    tracks = db.scalars(
+        select(Track).where(Track.status == "ready", Track.album_id.is_not(None)).order_by(Track.created_at)
+    ).unique().all()
+    by_album: dict[uuid.UUID, list[Track]] = {}
+    for t in tracks:
+        by_album.setdefault(t.album_id, []).append(t)
+
+    out = []
+    for album_tracks in by_album.values():
+        album = album_tracks[0].album
+        cover_track = next((t for t in album_tracks if t.cover_key), album_tracks[0])
+        out.append(AlbumCardOut(
+            id=album.id, title=album.title, artist=ArtistRef(id=album.artist.id, name=album.artist.name),
+            cover_url=track_out(cover_track, settings, user_id).cover_url,
+            track_count=len(album_tracks),
+        ))
+    out.sort(key=lambda a: a.title.lower())
+    return out
 
 
 @app.get("/albums/{album_id}", response_model=AlbumDetail)

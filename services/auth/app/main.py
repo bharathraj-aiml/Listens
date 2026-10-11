@@ -36,12 +36,16 @@ app.add_middleware(
 # Access tokens stay stateless and short-lived (15 min) so other services can verify them
 # with just the shared secret, no network call.
 _REFRESH_KEY = "refresh:{jti}"
+_SESSIONS_KEY = "sessions:{user_id}"  # SET of a user's live refresh jtis - backs "sign out everywhere"
 
 
 def _issue_pair(settings: Settings, r: Redis, user_id: uuid.UUID) -> TokenPair:
     access, _, access_ttl = create_token(settings, user_id, "access")
     refresh, jti, refresh_ttl = create_token(settings, user_id, "refresh")
     r.set(_REFRESH_KEY.format(jti=jti), str(user_id), ex=refresh_ttl)
+    sessions_key = _SESSIONS_KEY.format(user_id=user_id)
+    r.sadd(sessions_key, jti)
+    r.expire(sessions_key, refresh_ttl)  # approximate: refreshed on every login, so it tracks the newest session's TTL
     return TokenPair(access_token=access, refresh_token=refresh, expires_in=access_ttl)
 
 
@@ -110,6 +114,7 @@ def refresh(
     # GETDEL is atomic: of two concurrent refreshes with the same token, only one wins.
     if r.getdel(_REFRESH_KEY.format(jti=jti)) is None:
         raise _bad_refresh()
+    r.srem(_SESSIONS_KEY.format(user_id=user_id), jti)
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise _bad_refresh()
@@ -123,7 +128,9 @@ def logout(body: RefreshIn, r: Redis = Depends(get_redis), settings: Settings = 
         payload = decode_token(settings, body.refresh_token, "refresh")
     except jwt.PyJWTError:
         return
-    r.delete(_REFRESH_KEY.format(jti=payload.get("jti", "")))
+    jti = payload.get("jti", "")
+    r.delete(_REFRESH_KEY.format(jti=jti))
+    r.srem(_SESSIONS_KEY.format(user_id=payload["sub"]), jti)
 
 
 @app.get("/me", response_model=UserOut)
@@ -141,3 +148,24 @@ def update_me(body: ProfileUpdate, user: User = Depends(current_user), db: Sessi
     db.add(user)
     db.commit()
     return user
+
+
+@app.get("/me/sessions")
+def session_count(user: User = Depends(current_user), r: Redis = Depends(get_redis)) -> dict:
+    # Approximate: the set's TTL tracks the newest login, so a long-idle session may have
+    # expired its own refresh key while still lingering in the set - fine for a rough count.
+    return {"count": r.scard(_SESSIONS_KEY.format(user_id=user.id))}
+
+
+@app.post("/me/sessions/revoke-all", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_all_sessions(user: User = Depends(current_user), r: Redis = Depends(get_redis)) -> None:
+    """Signs this account out everywhere, including the device that called this - every
+    refresh token (this one too) stops working, so every signed-in browser/app needs to log
+    back in. There's no partial "all *other* devices" here: this endpoint has no way to tell
+    which jti belongs to the caller's own session (only the access token is presented, not the
+    refresh token), so revoking everything is the honest, unambiguous behavior."""
+    sessions_key = _SESSIONS_KEY.format(user_id=user.id)
+    jtis = r.smembers(sessions_key)
+    if jtis:
+        r.delete(*(_REFRESH_KEY.format(jti=jti) for jti in jtis))
+    r.delete(sessions_key)
