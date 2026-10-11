@@ -21,6 +21,7 @@ from redis.exceptions import RedisError, ResponseError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from listens_common import dedupe
 from listens_common.config import Settings
 from listens_common.models import Track
 from listens_common.storage import delete_prefix
@@ -100,6 +101,15 @@ def process_track(db: Session, s3, settings: Settings, track_id) -> str:
     )
     db.commit()
     log.info("track %s ready (%d ms, %s kbps, %d renditions)", track_id, info.duration_ms, info.bitrate_kbps, len(renditions))
+    try:
+        # Keep the best copy of the song, delete the others (possibly this very track). A failure
+        # here must not fail the transcode: the track is already ready and playable.
+        removed = dedupe.resolve_duplicates(db, s3, settings, track_id)
+        if removed:
+            log.info("removed %d duplicate cop%s of track %s: %s", len(removed), "y" if len(removed) == 1 else "ies", track_id, removed)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("duplicate cleanup failed for track %s; leaving both copies", track_id)
     return "ready"
 
 

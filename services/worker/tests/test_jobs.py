@@ -123,3 +123,31 @@ def test_poll_once_idle_returns_zero_and_recovers_from_missing_group(env):
     env.redis.xadd(jobs.STREAM, {"track_id": str(tid), "attempt": "0"})
     assert jobs.poll_once(env.redis, env.sessions, env.s3, env.cfg, "w1", block_ms=10) == 1
     assert env.track(tid).status == "ready"
+
+
+def test_a_lower_quality_copy_is_deleted_once_it_is_ready(env):
+    """The existing ready copy is 320 kbps; the new 192 kbps upload of the same song loses and goes."""
+    from sqlalchemy import update
+
+    twin = env.add_track(testing.make_audio(env.dir / "twin.mp3", seconds=8, bitrate="320k"), status="ready")
+    with env.sessions() as db:
+        db.execute(update(Track).where(Track.id == twin).values(source_bitrate_kbps=320, duration_ms=8000, title="t"))
+        db.commit()
+    new = env.add_track(testing.make_audio(env.dir / "new.mp3", seconds=8, bitrate="192k"))
+    with env.sessions() as db:
+        assert jobs.process_track(db, env.s3, env.cfg, new) == "ready"
+    assert env.track(new) is None and env.track(twin) is not None
+    assert keys(env, prefix=f"hls/{new}/") == []  # the loser's transcoded files were removed from storage too
+
+
+def test_a_higher_quality_new_copy_replaces_the_old_one(env):
+    from sqlalchemy import update
+
+    old = env.add_track(testing.make_audio(env.dir / "old.mp3", seconds=8, bitrate="96k"), status="ready")
+    with env.sessions() as db:
+        db.execute(update(Track).where(Track.id == old).values(source_bitrate_kbps=96, duration_ms=8000, title="t"))
+        db.commit()
+    new = env.add_track(testing.make_audio(env.dir / "better.mp3", seconds=8, bitrate="192k"))
+    with env.sessions() as db:
+        assert jobs.process_track(db, env.s3, env.cfg, new) == "ready"
+    assert env.track(old) is None and env.track(new).status == "ready"

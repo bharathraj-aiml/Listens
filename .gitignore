@@ -8,3 +8,4 @@ node_modules/
 *.egg-info/
 AGENT_HANDOFF.md
 .wrangler/
+.env.prod

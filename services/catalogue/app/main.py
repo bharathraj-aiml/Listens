@@ -9,6 +9,7 @@ from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from listens_common import dedupe
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
 from listens_common.models import Album, Artist, Follow, Track
@@ -130,8 +131,15 @@ def upload(
     stem = os.path.splitext(os.path.basename(file.filename or "Untitled"))[0]
     # Explicit form values win over embedded tags, which win over filename/"Unknown Artist".
     final_title = (title or tags.get("title") or stem).strip()[:200]
-    artist_row = _find_or_create_artist(db, user_id, (artist or tags.get("artist") or "Unknown Artist").strip()[:200])
+    final_artist = (artist or tags.get("artist") or "Unknown Artist").strip()[:200]
     album_name = album or tags.get("album")
+    # Same song in a different file (e.g. a re-encode): refuse it the same way a byte-identical
+    # upload is refused, before creating any artist/album rows or touching B2.
+    same_song = dedupe.find_duplicates(db, user_id, final_title, final_artist, album_name.strip() if album_name else None)
+    if same_song:
+        response.status_code = status.HTTP_200_OK
+        return UploadOut(track=track_out(same_song[0], settings, user_id), duplicate=True)
+    artist_row = _find_or_create_artist(db, user_id, final_artist)
     album_row = _find_or_create_album(db, artist_row, album_name.strip()[:200]) if album_name else None
 
     track_id = uuid.uuid4()

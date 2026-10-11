@@ -98,3 +98,25 @@ def test_auth_required(env):
     assert env.client.post("/upload", data=FORM, files={"file": ("a.mp3", f.read_bytes())}).status_code == 401
     assert env.client.get("/tracks").status_code == 401
     assert env.client.get("/search", params={"q": "x"}).status_code == 401
+
+
+def test_same_song_in_a_different_file_is_rejected_like_a_byte_duplicate(env):
+    first = post(env, testing.make_audio(env.dir / "a.mp3", seconds=2, title="Moon Walk", artist="The Echoes", album="Night"))
+    assert first.status_code == 201
+    # different bytes (different length), same song: "moon-walk" / "THE ECHOES" differ only in case/punctuation
+    again = post(env, testing.make_audio(env.dir / "b.mp3", seconds=3, title="moon-walk", artist="THE ECHOES"))
+    assert again.status_code == 200 and again.json()["duplicate"] is True
+    assert again.json()["track"]["id"] == first.json()["track"]["id"]
+    with env.sessions() as db:
+        assert db.query(Track).count() == 1 and db.query(Artist).count() == 1
+    assert len(env.redis.xrange("jobs:transcode")) == 1  # not re-queued
+    s = get_settings()
+    assert len(get_s3().list_objects_v2(Bucket=s.s3_bucket_audio)["Contents"]) == 1  # nothing extra stored
+
+
+def test_untagged_files_with_the_same_filename_stem_are_not_called_duplicates(env):
+    for d in ("a", "b"):
+        (env.dir / d).mkdir()
+    a = post(env, testing.make_audio(env.dir / "a" / "Track 01.mp3", seconds=2))
+    b = post(env, testing.make_audio(env.dir / "b" / "Track 01.mp3", seconds=3))
+    assert a.status_code == 201 and b.status_code == 201 and b.json()["duplicate"] is False

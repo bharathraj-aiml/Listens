@@ -1,0 +1,115 @@
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from listens_common import dedupe, testing
+from listens_common.models import Album, Artist, Like, Playlist, PlaylistTrack, Track, User
+
+T0 = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def make_world():
+    Session = testing.sqlite_sessionmaker()
+    db = Session()
+    u = User(email="a@x.io", username="a", password_hash="x", display_name="A")
+    other = User(email="b@x.io", username="b", password_hash="x", display_name="B")
+    db.add_all([u, other])
+    db.flush()
+    return db, u, other
+
+
+def add_track(db, user, title="Moon Walk", artist="The Echoes", album=None, *, kbps=192, ms=240_000,
+              status="ready", age_days=0):
+    a = db.query(Artist).filter_by(name=artist, owner_user_id=user.id).first() or Artist(name=artist, owner_user_id=user.id)
+    db.add(a)
+    db.flush()
+    al = None
+    if album:
+        al = db.query(Album).filter_by(title=album, artist_id=a.id).first() or Album(title=album, artist_id=a.id)
+        db.add(al)
+        db.flush()
+    t = Track(artist_id=a.id, album_id=al.id if al else None, uploader_id=user.id, title=title, status=status,
+              duration_ms=ms, source_bitrate_kbps=kbps, created_at=T0 + timedelta(days=age_days),
+              content_sha256=f"{title}{artist}{kbps}{age_days}{ms}")
+    db.add(t)
+    db.commit()
+    return t
+
+
+def test_norm_ignores_case_punctuation_and_spacing_but_not_letters_or_marks():
+    assert dedupe.norm("  Moon-Walk!! ") == dedupe.norm("moon   walk") == "moon walk"
+    assert dedupe.norm("Café") == dedupe.norm("CAFÉ")
+    # Tamil vowel signs are combining marks: dropping them would make different words collide
+    assert dedupe.norm("கலை") != dedupe.norm("கல")
+
+
+def test_same_song_is_found_across_case_punctuation_and_a_missing_album():
+    db, u, _ = make_world()
+    existing = add_track(db, u, album="Night")
+    found = dedupe.find_duplicates(db, u.id, "moon walk!", "the echoes", None)
+    assert [t.id for t in found] == [existing.id]
+    assert dedupe.find_duplicates(db, u.id, "Moon Walk", "The Echoes", "Night")
+    assert not dedupe.find_duplicates(db, u.id, "Moon Walk", "The Echoes", "A Different Album")
+
+
+def test_different_titles_artists_users_and_failed_tracks_are_not_duplicates():
+    db, u, other = make_world()
+    add_track(db, u)
+    add_track(db, u, title="Moon Walk (Live)", artist="The Echoes", kbps=128)
+    assert not dedupe.find_duplicates(db, u.id, "Moon Walk (Remix)", "The Echoes")
+    assert not dedupe.find_duplicates(db, u.id, "Moon Walk", "Other Band")
+    assert not dedupe.find_duplicates(db, other.id, "Moon Walk", "The Echoes")  # someone else's library
+    failed = add_track(db, u, title="Broken", status="failed")
+    assert not dedupe.find_duplicates(db, u.id, "Broken", "The Echoes")
+    assert failed.status == "failed"
+
+
+def test_untagged_unknown_artist_files_are_never_judged_duplicates():
+    db, u, _ = make_world()
+    add_track(db, u, title="Track 01", artist="Unknown Artist")
+    assert not dedupe.find_duplicates(db, u.id, "Track 01", "Unknown Artist")
+
+
+def test_duration_must_be_within_tolerance_when_given():
+    db, u, _ = make_world()
+    add_track(db, u, ms=240_000)
+    assert dedupe.find_duplicates(db, u.id, "Moon Walk", "The Echoes", duration_ms=242_000)
+    assert not dedupe.find_duplicates(db, u.id, "Moon Walk", "The Echoes", duration_ms=250_000)
+
+
+def test_keeper_is_highest_bitrate_then_oldest():
+    db, u, _ = make_world()
+    low = add_track(db, u, kbps=128, age_days=0)
+    high_new = add_track(db, u, kbps=320, age_days=5, ms=240_500)
+    high_old = add_track(db, u, kbps=320, age_days=1, ms=240_200)
+    assert dedupe.pick_keeper([low, high_new, high_old]).id == high_old.id
+
+
+def test_resolve_keeps_best_copy_deletes_rest_and_moves_likes_and_playlists():
+    db, u, other = make_world()
+    low = add_track(db, u, kbps=128, age_days=0)
+    best = add_track(db, u, kbps=320, age_days=3, ms=240_400)
+    pl = Playlist(owner_id=u.id, name="p")
+    db.add(pl)
+    db.flush()
+    db.add_all([Like(user_id=u.id, track_id=low.id), Like(user_id=other.id, track_id=low.id), Like(user_id=other.id, track_id=best.id),
+                PlaylistTrack(playlist_id=pl.id, track_id=low.id, position=0, added_by=u.id)])
+    db.commit()
+    low_id, best_id = low.id, best.id
+
+    s3 = MagicMock()
+    settings = SimpleNamespace(s3_bucket_audio="audio", s3_bucket_covers="covers")
+    removed = dedupe.resolve_duplicates(db, s3, settings, best_id)
+
+    assert removed == [low_id]
+    assert db.get(Track, low_id) is None and db.get(Track, best_id) is not None
+    assert {(l.user_id, l.track_id) for l in db.query(Like)} == {(u.id, best_id), (other.id, best_id)}  # moved, no double like
+    assert db.query(PlaylistTrack).one().track_id == best_id
+    s3.get_paginator.assert_called()  # its originals/ and hls/ prefixes were cleaned
+
+
+def test_resolve_on_a_unique_song_changes_nothing():
+    db, u, _ = make_world()
+    t = add_track(db, u)
+    assert dedupe.resolve_duplicates(db, MagicMock(), SimpleNamespace(), t.id) == []
+    assert db.get(Track, t.id) is not None
