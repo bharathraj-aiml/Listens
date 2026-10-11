@@ -1,34 +1,42 @@
 # Pokes the HTTP-triggered worker/events/recommender services (see services/*/app/http.py)
 # since Render's free tier can't run them as a persistent loop the way docker-compose does.
-# As a side effect, the frequent pings also keep worker/events from going to sleep on Render's
-# free tier (idle web services sleep after ~15 min and take 30-60s to wake on the next request).
 #
-# GitHub Actions schedules are "best effort" and the platform doesn't allow more than once every
-# 5 minutes; we run every 10 to halve Actions usage - a real backlog may take a few ticks to fully drain.
+# Deliberately infrequent: Render's free plan gives the whole workspace 750 instance-hours a month,
+# and a service is "awake" for ~15 min after every request. Pinging worker + events every few
+# minutes kept both awake 24/7 (~1,460 h/month) and would get ALL services suspended mid-month.
+# At these rates they cost roughly 55 h/month in total, leaving the rest for playback. Fast
+# transcoding is done by the local laptop worker (scripts/run_local_worker.sh); this is the
+# slow fallback. Run the workflow manually (Actions tab -> Run workflow) to drain sooner.
 #
-# The three service URLs are public (not secrets), so they're written inline below - no
-# repo secrets needed. If a service is renamed or moved, update them here.
+# The service URLs are public (not secrets), so they're written inline below - no repo secrets
+# needed. If a service is renamed or moved, update them here.
 name: Tick background services
 
 on:
   schedule:
-    - cron: "*/10 * * * *"  # worker + events
-    - cron: "0 3 * * *"    # recommender, once daily
+    - cron: "0 */6 * * *"  # worker, every 6 hours (UTC)
+    - cron: "50 2 * * *"   # events, daily, just before the recommender
+    - cron: "0 3 * * *"    # recommender, daily
   workflow_dispatch: {}
 
-# Never let two runs overlap: a real song can take longer than the 5-minute schedule on Render's
-# free-tier CPU, and a second concurrent transcode on a 512MB instance risks running out of memory.
+# Never let two runs overlap: a real song can take minutes on Render's free-tier CPU, and a
+# second concurrent transcode on a 512MB instance risks running out of memory.
 concurrency:
   group: tick-background-services
   cancel-in-progress: false
 
 jobs:
-  tick-worker-and-events:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/10 * * * *'
+  tick-worker:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 */6 * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Tick worker (drain transcode queue)
         run: curl -fsS --max-time 300 -X POST "https://shadow-listens-worker.onrender.com/tick?max_seconds=240"
+
+  tick-events:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '50 2 * * *'
+    runs-on: ubuntu-latest
+    steps:
       - name: Tick events (drain play-event queue)
         run: curl -fsS --max-time 120 -X POST "https://shadow-listens-events.onrender.com/tick?max_seconds=25"
 
