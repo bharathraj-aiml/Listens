@@ -20,11 +20,9 @@ function parseLrc(raw: string): LrcLine[] {
   return lines.sort((a, b) => a.time - b.time);
 }
 
-/** The lyrics content itself (fetch + synced/plain/empty rendering), shared by the slide-in
- *  LyricsPanel (desktop + mobile "open via icon") and NowPlayingSheet's inline scrollable
- *  section (mobile - matches Spotify/Apple Music, where lyrics live in the Now Playing scroll,
- *  not a separate screen). `active` gates the fetch so a panel that isn't open yet, or a sheet
- *  that hasn't been opened, doesn't fetch lyrics for every track in the queue up front. */
+/** The lyrics content itself (fetch + synced/plain/empty rendering), shown in the slide-in
+ *  LyricsPanel on desktop and mobile (opened from the Lyrics button). `active` gates the fetch so
+ *  a panel that isn't open yet doesn't fetch lyrics for every track in the queue up front. */
 export default function LyricsView({ trackId, active }: { trackId: string | undefined; active: boolean }) {
   const currentTime = usePlayer((s) => s.currentTime);
   const [data, setData] = useState<Lyrics | null>(null);
@@ -55,9 +53,15 @@ export default function LyricsView({ trackId, active }: { trackId: string | unde
     return idx;
   }, [synced, currentTime]);
 
+  // Follow the active line, but only inside the panel's own scroll area. scrollIntoView would also
+  // scroll every scrollable ancestor (the page / Now Playing sheet) and drag them along.
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [activeIndex]);
+    const line = activeRef.current;
+    const box = line?.closest<HTMLElement>(".overflow-y-auto");
+    if (!line || !box || !active) return;
+    const lineMid = line.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop + line.offsetHeight / 2;
+    box.scrollTo({ top: lineMid - box.clientHeight / 2, behavior: "smooth" });
+  }, [activeIndex, active]);
 
   if (!trackId) return <p className="text-sm text-muted">Nothing playing.</p>;
   if (error) return <p role="alert" className="text-sm text-danger">{error}</p>;

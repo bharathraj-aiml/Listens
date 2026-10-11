@@ -2,11 +2,10 @@
 
 import Cover, { hue } from "@/components/Cover";
 import {
-  CaretDownIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, RepeatOnceIcon,
+  CaretDownIcon, LyricsIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, RepeatOnceIcon,
   ShuffleIcon, SimilarIcon,
 } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
-import LyricsView from "@/components/LyricsView";
 import { hslToRgbTriplet, useDominantColor } from "@/lib/color";
 import { formatTime } from "@/lib/format";
 import { useSlideIn } from "@/lib/useSlideIn";
@@ -16,8 +15,9 @@ import { currentTrack, usePlayer } from "@/store/player";
 /** Mobile-only full-screen "Now Playing" view, modeled on Spotify/Apple Music: the slim
  *  mini-player (PlayerBar) only has room for cover + title + play/pause + prev/next, so every
  *  other control - shuffle, repeat, seek, queue, similar tracks, and lyrics - lives here, one
- *  tap or swipe away. The whole thing scrolls: lyrics are an inline section at the bottom, not
- *  a separate screen, matching how both of those apps actually lay this out. */
+ *  tap or swipe away. Lyrics are hidden until the Lyrics button is tapped, which opens them in
+ *  their own panel (LyricsPanel) - they used to be an inline section here, and auto-scrolling to
+ *  the active line dragged the whole sheet down the moment it opened. */
 export default function NowPlayingSheet() {
   const track = usePlayer(currentTrack);
   const open = usePlayer((s) => s.nowPlayingOpen);
@@ -44,8 +44,6 @@ export default function NowPlayingSheet() {
       style={{ background: `radial-gradient(ellipse 100% 60% at 50% 0%, rgba(${ambient}, 0.4), transparent), var(--color-ink)` }}
       className={`fixed inset-0 z-[35] flex flex-col overflow-y-auto transition-[transform,background] duration-200 ease-out motion-reduce:transition-none md:hidden ${shown ? "translate-y-0" : "translate-y-full"}`}
     >
-      {/* swipe-down-to-close only on the top area, not the whole scrollable sheet - otherwise a
-          vertical scroll gesture over the lyrics section below could be mistaken for a dismiss */}
       <div onPointerDown={sheetSwipe.onPointerDown} onPointerUp={sheetSwipe.onPointerUp} className="shrink-0">
         <header className="grid grid-cols-[44px_1fr_44px] items-center px-2 py-3">
           <button aria-label="Close now playing" onClick={() => setOpen(false)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg">
@@ -132,6 +130,16 @@ export default function NowPlayingSheet() {
             <button aria-label="Similar tracks" title="Similar tracks" onClick={() => p.setSimilarOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg active:scale-90">
               <SimilarIcon />
             </button>
+            <button
+              aria-label="Lyrics"
+              title="Lyrics"
+              data-testid="lyrics-toggle-mobile"
+              aria-pressed={p.lyricsOpen}
+              onClick={() => p.setLyricsOpen(true)}
+              className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg active:scale-90"
+            >
+              <LyricsIcon />
+            </button>
             <button aria-label="Queue" title="Queue" onClick={() => p.setQueueOpen(true)} className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg active:scale-90">
               <QueueIcon />
             </button>
@@ -139,11 +147,6 @@ export default function NowPlayingSheet() {
         </div>
       </div>
 
-      {/* Lyrics: inline, reached by scrolling - not a separate screen (see file comment) */}
-      <div className="flex-1 border-t border-line px-6 py-6">
-        <h2 className="mb-4 text-lg font-semibold">Lyrics</h2>
-        <LyricsView trackId={track.id} active={open} />
-      </div>
     </div>
   );
 }
