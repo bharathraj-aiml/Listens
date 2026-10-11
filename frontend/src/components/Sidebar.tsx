@@ -40,13 +40,13 @@ export default function Sidebar() {
 
       {/* mobile: bottom tab bar. A glass pill slides to the active tab (spring-like overshoot), the active icon
           lifts and pops once when it becomes active. All motion is dropped for prefers-reduced-motion. */}
-      <nav aria-label="Main" className="glass-clear fixed inset-x-3 bottom-3 z-30 flex h-14 rounded-full md:hidden">
+      <nav aria-label="Main" className="glass-clear fixed inset-x-3 bottom-3 z-30 flex h-14 rounded-full px-1.5 md:hidden">
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-y-1.5 left-0 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.64,1)] motion-reduce:transition-none"
-          style={{ width: `${100 / NAV.length}%`, transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`, opacity: activeIndex < 0 ? 0 : 1 }}
+          className="pointer-events-none absolute inset-y-1 left-1.5 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.64,1)] motion-reduce:transition-none"
+          style={{ width: `calc((100% - 0.75rem) / ${NAV.length})`, transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`, opacity: activeIndex < 0 ? 0 : 1 }}
         >
-          <span className="glass-lens mx-1 block h-full rounded-full" />
+          <span className="glass-lens -mx-1.5 block h-full rounded-full" />
         </span>
         {NAV.map(({ href, label, Icon }, i) => {
           const isActive = i === activeIndex;
@@ -54,7 +54,7 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={`relative z-10 flex flex-1 flex-col items-center justify-center gap-0.5 text-xs transition-[color,transform] duration-200 active:scale-90 motion-reduce:transition-none [text-shadow:0_1px_8px_rgba(0,0,0,0.55)] ${isActive ? "text-white" : "text-white/75"}`}
+              className={`relative z-10 flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px] transition-[color,transform] duration-200 active:scale-90 motion-reduce:transition-none [text-shadow:0_1px_8px_rgba(0,0,0,0.55)] ${isActive ? "text-white" : "text-white/75"}`}
             >
               <span className={`block transition-transform duration-300 motion-reduce:transition-none ${isActive ? "-translate-y-0.5 scale-110 animate-tab-pop" : ""}`}>
                 <Icon />
