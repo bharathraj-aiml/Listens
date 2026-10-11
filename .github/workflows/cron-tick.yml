@@ -16,6 +16,12 @@ on:
     - cron: "0 3 * * *"    # recommender, once daily
   workflow_dispatch: {}
 
+# Never let two runs overlap: a real song can take longer than the 5-minute schedule on Render's
+# free-tier CPU, and a second concurrent transcode on a 512MB instance risks running out of memory.
+concurrency:
+  group: tick-background-services
+  cancel-in-progress: false
+
 jobs:
   tick-worker-and-events:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/5 * * * *'
