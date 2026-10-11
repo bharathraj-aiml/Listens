@@ -15,7 +15,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import taste, tamil_seed
+from app import taste
+from listens_common import tamil_seed
 from listens_common.models import (
     Album, Artist, ArtistMeta, Like, PlayEvent, PlaylistTrack, Track, TrackVector, UserVector,
 )
@@ -70,10 +71,13 @@ def load_library(db: Session, include: set[uuid.UUID] | None = None) -> taste.Li
         artist_id: taste.ArtistInfo(circle=seed.circle) for artist_id, seed in seeds.items() if seed
     }
     for m in db.scalars(select(ArtistMeta)):
-        top = max((s["score"] for s in m.similar), default=0)
+        related = [s for s in m.similar if not s.get("self")]
+        top = max((s["score"] for s in related), default=0)
         artists[m.artist_id] = taste.ArtistInfo(
             mbid=m.mbid, tags=dict(m.tags or {}),
-            neighbours={s["mbid"]: s["score"] / top for s in m.similar if top and s.get("mbid")},
+            # a joint credit stores each named person's id as a {"self": true} entry
+            extra_mbids=tuple(s["mbid"] for s in m.similar if s.get("self")),
+            neighbours={s["mbid"]: s["score"] / top for s in related if top and s.get("mbid")},
             circle=artists[m.artist_id].circle if m.artist_id in artists else None,
         )
     return taste.Library(items, artists)

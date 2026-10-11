@@ -70,9 +70,14 @@ class Item:
 @dataclass
 class ArtistInfo:
     mbid: str | None = None
+    extra_mbids: tuple[str, ...] = ()  # the other people named in a joint credit ("A.R. Rahman/Hariharan/...")
     tags: dict[str, int] = field(default_factory=dict)
     neighbours: dict[str, float] = field(default_factory=dict)  # mbid -> 0..1 (strongest = 1)
     circle: str | None = None  # tamil_seed circle ("classic" / "modern"); same circle = baseline affinity
+
+    @property
+    def all_mbids(self) -> tuple[str, ...]:
+        return tuple(m for m in (self.mbid, *self.extra_mbids) if m)
 
 
 def _cosine_sparse(a: dict[str, float], b: dict[str, float]) -> float:
@@ -116,11 +121,12 @@ class Library:
         ia, ib = self.artists.get(a.artist_id), self.artists.get(b.artist_id)
         value: float | None = None
         if ia and ib and (ia.neighbours or ib.neighbours or ia.tags or ib.tags):
-            direct = max(ia.neighbours.get(ib.mbid or "", 0.0), ib.neighbours.get(ia.mbid or "", 0.0))
+            mine, theirs = ia.all_mbids, ib.all_mbids
+            direct = max([ia.neighbours.get(m, 0.0) for m in theirs] + [ib.neighbours.get(m, 0.0) for m in mine] + [0.0])
             # both artists' neighbour lists, each including the artist itself, so a direct link
             # also raises the overlap
-            na = {**ia.neighbours, **({ia.mbid: 1.0} if ia.mbid else {})}
-            nb = {**ib.neighbours, **({ib.mbid: 1.0} if ib.mbid else {})}
+            na = {**ia.neighbours, **dict.fromkeys(mine, 1.0)}
+            nb = {**ib.neighbours, **dict.fromkeys(theirs, 1.0)}
             listening = max(direct, 0.85 * _cosine_sparse(na, nb))
             tags = _cosine_sparse({k: float(v) for k, v in ia.tags.items()}, {k: float(v) for k, v in ib.tags.items()})
             value = 0.8 * listening + 0.2 * tags if (ia.tags and ib.tags) else listening

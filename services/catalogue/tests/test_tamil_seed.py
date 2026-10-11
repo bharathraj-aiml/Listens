@@ -1,6 +1,7 @@
 import uuid
 
-from app import tamil_seed, taste
+from app import taste
+from listens_common import tamil_seed
 
 from .test_catalogue import seed
 

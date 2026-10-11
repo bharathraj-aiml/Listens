@@ -167,3 +167,15 @@ def test_era_and_language_shape_similarity_for_tamil_titles(env):
 
     titles = [t["title"] for t in env.client.get(f"/tracks/{seed_id}/similar", headers=h(env)).json()]
     assert titles[0] == "நிலா"
+
+
+def test_a_joint_credit_is_linked_to_each_person_named_in_it():
+    joint, solo, other = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    lib = taste.Library([], {
+        joint: taste.ArtistInfo(mbid="rahman", extra_mbids=("hari",), neighbours={"x": 1.0}),
+        solo: taste.ArtistInfo(mbid="hari", neighbours={"y": 1.0}),
+        other: taste.ArtistInfo(mbid="zzz", neighbours={"q": 1.0}),
+    })
+    mk = lambda artist: taste.Item(id=uuid.uuid4(), artist_id=artist)
+    assert lib.artist_affinity(mk(joint), mk(solo)) > 0.3  # shares Hariharan
+    assert lib.artist_affinity(mk(joint), mk(other)) == 0.0

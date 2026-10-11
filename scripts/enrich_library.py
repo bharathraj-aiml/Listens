@@ -46,25 +46,30 @@ def enrich_artists(db, apply: bool, refresh: bool, limit: int | None) -> None:
         artists = artists[:limit]
     print(f"{len(artists)} artist(s) to look up" + ("" if apply else "  [dry run: nothing is saved]"))
 
+    matched = 0
     for n, artist in enumerate(artists, 1):
         try:
-            hit = meta.find_artist(artist.name)
-            if not hit:
-                print(f"[{n}/{len(artists)}] {artist.name}: no confident MusicBrainz match, skipped")
-                continue
-            tags = meta.tags(hit["mbid"])
-            similar = meta.similar(hit["mbid"])
+            found = meta.resolve(artist.name)
         except Exception as e:  # noqa: BLE001 - one bad lookup must not stop the run
             print(f"[{n}/{len(artists)}] {artist.name}: lookup failed ({e}), skipped")
             continue
-        top = ", ".join(s["name"] for s in similar[:4]) or "none found"
-        print(f"[{n}/{len(artists)}] {artist.name} -> {hit['name']}: {len(tags)} tags, {len(similar)} similar (top: {top})")
+        if not found:
+            print(f"[{n}/{len(artists)}] {artist.name}: no named artist found on MusicBrainz, skipped")
+            continue
+        matched += 1
+        who = ", ".join(p["name"] for p in found["parts"])
+        top = ", ".join(s["name"] for s in found["similar"][:4]) or "none found"
+        print(f"[{n}/{len(artists)}] {artist.name} -> {who}: {len(found['tags'])} tags, {len(found['similar'])} similar (top: {top})")
         if not apply:
             continue
+        # a joint credit keeps each named person's id as a {"self": true} entry so the recommender
+        # can tell that "A.R. Rahman/Hariharan" and a "Hariharan" track are the same person
+        similar = [*found["similar"], *({"mbid": p["mbid"], "name": p["name"], "score": 0, "self": True} for p in found["parts"])]
         row = db.get(ArtistMeta, artist.id) or ArtistMeta(artist_id=artist.id)
-        row.mbid, row.tags, row.similar, row.fetched_at = hit["mbid"], tags, similar, datetime.now(UTC)
+        row.mbid, row.tags, row.similar, row.fetched_at = found["mbid"], found["tags"], similar, datetime.now(UTC)
         db.merge(row)
         db.commit()
+    print(f"matched {matched} of {len(artists)} artist credits")
 
 
 def backfill_audio(db, apply: bool, limit: int | None) -> None:
