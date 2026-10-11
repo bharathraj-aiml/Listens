@@ -23,6 +23,7 @@ interface Prefs {
   dataSaver: boolean;
   defaultPlaylistPublic: boolean;
   compactRows: boolean;
+  followSystemTransparency: boolean;
   notifyPush: boolean;
   notifyEmail: boolean;
 }
@@ -39,6 +40,7 @@ const DEFAULT_PREFS: Prefs = {
   dataSaver: false,
   defaultPlaylistPublic: true,
   compactRows: false,
+  followSystemTransparency: false,
   notifyPush: true,
   notifyEmail: true,
 };
@@ -59,6 +61,7 @@ function loadPrefs(): Prefs {
       dataSaver: typeof p.dataSaver === "boolean" ? p.dataSaver : DEFAULT_PREFS.dataSaver,
       defaultPlaylistPublic: typeof p.defaultPlaylistPublic === "boolean" ? p.defaultPlaylistPublic : DEFAULT_PREFS.defaultPlaylistPublic,
       compactRows: typeof p.compactRows === "boolean" ? p.compactRows : DEFAULT_PREFS.compactRows,
+      followSystemTransparency: typeof p.followSystemTransparency === "boolean" ? p.followSystemTransparency : DEFAULT_PREFS.followSystemTransparency,
       notifyPush: typeof p.notifyPush === "boolean" ? p.notifyPush : DEFAULT_PREFS.notifyPush,
       notifyEmail: typeof p.notifyEmail === "boolean" ? p.notifyEmail : DEFAULT_PREFS.notifyEmail,
     };
@@ -120,6 +123,7 @@ interface PlayerState {
   dataSaver: boolean; // Data-saving: forces the lowest quality rendition
   defaultPlaylistPublic: boolean; // Privacy: default visibility for newly created playlists
   compactRows: boolean; // Content & display: denser track-list rows
+  followSystemTransparency: boolean; // Content & display: obey the OS "reduce transparency" setting (off = always show glass)
   notifyPush: boolean; // Notifications: local-only preference (no push infra exists yet)
   notifyEmail: boolean; // Notifications: local-only preference (no email infra exists yet)
 
@@ -151,6 +155,7 @@ interface PlayerState {
   setDataSaver: (v: boolean) => void;
   setDefaultPlaylistPublic: (v: boolean) => void;
   setCompactRows: (v: boolean) => void;
+  setFollowSystemTransparency: (v: boolean) => void;
   setNotifyPush: (v: boolean) => void;
   setNotifyEmail: (v: boolean) => void;
   // engine -> store
@@ -166,7 +171,7 @@ function persistPrefs(s: PlayerState) {
     volume: s.volume, quality: s.quality, monoAudio: s.monoAudio, volumeNormalization: s.volumeNormalization,
     crossfadeSeconds: s.crossfadeSeconds, gaplessPlayback: s.gaplessPlayback, autoplaySimilar: s.autoplaySimilar,
     shuffleStyle: s.shuffleStyle, dataSaver: s.dataSaver, defaultPlaylistPublic: s.defaultPlaylistPublic,
-    compactRows: s.compactRows, notifyPush: s.notifyPush, notifyEmail: s.notifyEmail,
+    compactRows: s.compactRows, followSystemTransparency: s.followSystemTransparency, notifyPush: s.notifyPush, notifyEmail: s.notifyEmail,
   });
 }
 
@@ -322,6 +327,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   },
   setCompactRows: (compactRows) => {
     set({ compactRows });
+    persistPrefs(get());
+  },
+  setFollowSystemTransparency: (followSystemTransparency) => {
+    set({ followSystemTransparency });
     persistPrefs(get());
   },
   setNotifyPush: (notifyPush) => {

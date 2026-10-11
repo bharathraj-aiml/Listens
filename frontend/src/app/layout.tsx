@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import GlassPreference from "@/components/GlassPreference";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -15,7 +16,10 @@ export const viewport: Viewport = { themeColor: "#0c0d11", width: "device-width"
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <GlassPreference />
+        {children}
+      </body>
     </html>
   );
 }
