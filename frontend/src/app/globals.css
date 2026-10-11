@@ -2,9 +2,11 @@
 
 @theme {
   --color-ink: #0b0b12;
-  --color-panel: #13131e;
-  --color-raise: #1b1b2a;
-  --color-line: #2a2a40;
+  /* Glass tokens: translucent whites over the ambient backdrop instead of opaque greys, so every
+     card/input/row that already uses panel/raise/line picks up the liquid-glass look. */
+  --color-panel: rgb(255 255 255 / 0.07);
+  --color-raise: rgb(255 255 255 / 0.11);
+  --color-line: rgb(255 255 255 / 0.14);
   --color-fg: #ececf5;
   --color-muted: #9a9ab5;
   /* Single accent (was split across two hues, purple #8b7bff + amber #ffb86b - the purple read as
@@ -17,9 +19,23 @@
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-html, body { background: var(--color-ink); color: var(--color-fg); font-family: var(--font-sans); }
-body { min-height: 100dvh; }
+html { background: var(--color-ink); }
+body { color: var(--color-fg); font-family: var(--font-sans); min-height: 100dvh; }
 * { scrollbar-width: thin; scrollbar-color: var(--color-line) transparent; }
+
+/* Ambient colour field the glass blurs against. Fixed so it doesn't scroll with content. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60vmax 50vmax at 10% -5%, rgba(255, 184, 107, 0.28), transparent 60%),
+    radial-gradient(55vmax 50vmax at 95% 10%, rgba(139, 123, 255, 0.24), transparent 60%),
+    radial-gradient(60vmax 55vmax at 70% 105%, rgba(255, 107, 129, 0.20), transparent 60%),
+    radial-gradient(50vmax 45vmax at 0% 95%, rgba(64, 200, 190, 0.16), transparent 60%);
+}
 
 input[type="range"] { accent-color: var(--color-accent); }
 :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
@@ -48,8 +64,32 @@ button:not(:disabled) { cursor: pointer; }
     inset 0 -1px 0 rgba(255, 255, 255, 0.06),
     0 10px 32px rgba(0, 0, 0, 0.35);
 }
+/* Chrome surfaces (sidebar, tab bar, player bar, side panels, menus): darker tint than .glass so
+   text stays legible over busy album art and the backdrop. Edge is an inset ring, not a border,
+   so it composes with any rounding. */
+.glass-surface {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
+    rgba(16, 16, 26, 0.5);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Content cards/forms: lighter blur, same highlight edge. */
+.glass-card {
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
 @media (prefers-reduced-transparency: reduce) {
-  .glass { background: var(--color-raise); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .glass { background: #1b1b2a; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .glass-surface { background: #13131e; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .glass-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -28,10 +28,10 @@ export default function PlayerBar() {
   return (
     <div
       data-testid="player-bar"
-      className="fixed inset-x-0 bottom-14 z-30 border-t border-line bg-panel/95 backdrop-blur md:bottom-0 md:left-60"
+      className="glass-surface fixed inset-x-3 bottom-[4.75rem] z-30 overflow-hidden rounded-2xl md:bottom-3 md:left-[16.5rem] md:right-3"
     >
       {/* thin progress line on mobile (the full slider is desktop-only) */}
-      <div className="h-0.5 bg-line md:hidden">
+      <div className="h-0.5 bg-white/15 md:hidden">
         <div className="h-full bg-accent transition-[width]" style={{ width: duration ? `${Math.min(100, (p.currentTime / duration) * 100)}%` : 0 }} />
       </div>
       <div

@@ -66,7 +66,7 @@ export default function UploadPage() {
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold tracking-tight">Upload music</h1>
 
-      <form onSubmit={submit} className="space-y-4 rounded-xl border border-line bg-panel p-5" data-testid="upload-form">
+      <form onSubmit={submit} className="glass-card space-y-4 rounded-2xl border border-line bg-panel p-5" data-testid="upload-form">
         <div>
           <label htmlFor="file" className="mb-1 block text-sm text-muted">Audio files (mp3, flac, wav, ogg, opus, m4a)</label>
           <input
@@ -111,7 +111,7 @@ export default function UploadPage() {
       {items.length > 0 && (
         <ul className="space-y-2" data-testid="upload-progress">
           {items.map((it, i) => (
-            <li key={i} className="rounded-lg border border-line bg-panel px-4 py-2 text-sm">
+            <li key={i} className="glass-card rounded-xl border border-line bg-panel px-4 py-2 text-sm">
               <div className="flex justify-between gap-3">
                 <span className="truncate">{it.name}</span>
                 <span className={it.state === "error" ? "text-danger" : it.state === "done" ? "text-ok" : "text-muted"}>

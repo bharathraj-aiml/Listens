@@ -50,7 +50,7 @@ export default function AddToPlaylistMenu({ trackId, trackTitle }: { trackId: st
         <PlaylistIcon width={18} height={18} />
       </button>
       {open && (
-        <div data-testid="add-to-playlist-menu" className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-line bg-raise p-1 shadow-xl">
+        <div data-testid="add-to-playlist-menu" className="glass-surface absolute right-0 top-full z-50 mt-1 w-56 rounded-xl p-1">
           {playlists === null && <div className="px-3 py-2 text-xs text-muted">Loading…</div>}
           {playlists?.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted">No playlists yet. Create one from the Playlists page.</div>
@@ -60,7 +60,7 @@ export default function AddToPlaylistMenu({ trackId, trackTitle }: { trackId: st
               key={p.id}
               data-testid="add-to-playlist-option"
               onClick={() => addTo(p.id)}
-              className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-panel"
+              className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-white/10"
             >
               <span className="truncate">{p.name}</span>
               {added === p.id && <span className="text-xs text-ok">Added</span>}

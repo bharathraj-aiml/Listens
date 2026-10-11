@@ -48,7 +48,7 @@ export default function PlaylistsPage() {
       </header>
 
       {creating && (
-        <form onSubmit={create} data-testid="new-playlist-form" className="flex gap-2 rounded-xl border border-line bg-panel p-3">
+        <form onSubmit={create} data-testid="new-playlist-form" className="glass-card flex gap-2 rounded-2xl border border-line bg-panel p-3">
           <input
             autoFocus
             value={name}
@@ -72,7 +72,7 @@ export default function PlaylistsPage() {
         <ul data-testid="playlist-list" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {playlists.map((p) => (
             <li key={p.id}>
-              <Link href={`/playlist/${p.id}`} data-testid="playlist-card" className="flex items-center gap-3 rounded-xl border border-line bg-panel p-3 hover:border-accent">
+              <Link href={`/playlist/${p.id}`} data-testid="playlist-card" className="glass-card flex items-center gap-3 rounded-2xl border border-line bg-panel p-3 transition-colors hover:border-accent hover:bg-raise">
                 <Cover id={p.id} url={p.cover_url} size={56} />
                 <div className="min-w-0">
                   <div className="truncate font-medium">{p.name}</div>

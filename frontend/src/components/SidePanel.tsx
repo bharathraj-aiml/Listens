@@ -33,9 +33,9 @@ export default function SidePanel({ open, onClose, title, subtitle, headerExtra,
       aria-hidden={!open}
       onPointerDown={swipe.onPointerDown}
       onPointerUp={swipe.onPointerUp}
-      className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-line bg-panel shadow-2xl transition-transform duration-200 ease-out motion-reduce:transition-none ${shown ? "translate-x-0" : "translate-x-full"}`}
+      className={`glass-surface fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col transition-transform duration-200 ease-out motion-reduce:transition-none md:inset-y-3 md:right-3 md:rounded-2xl ${shown ? "translate-x-0" : "translate-x-[110%]"}`}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+      <header className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
         <div className="min-w-0">
           <h2 className="font-semibold">{title}</h2>
           {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}

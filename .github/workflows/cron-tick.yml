@@ -10,6 +10,18 @@
 #
 # The service URLs are public (not secrets), so they're written inline below - no repo secrets
 # needed. If a service is renamed or moved, update them here.
+#
+# warm-front-services (below) is a SEPARATE, manual-only job: it pings the 5 user-facing
+# services (gateway, frontend, auth, catalogue, stream) that this schedule otherwise never
+# touches, so they're as free as the three above to fall fully asleep after ~15 min idle. That's
+# deliberate - keeping all 5 warm on any kind of recurring schedule costs roughly 730 h/month
+# *per service* if pinged often enough to never let them sleep (since Render only charges while
+# a free-tier instance is actually awake), which for 5 services alone blows past the whole
+# workspace's 750 h/month cap even before the ~55 h/month above. Run this manually (Actions tab
+# -> Run workflow, tick "warm_front_services") a minute or two before sharing the live link with
+# someone, so they don't hit a ~10-30s cold start on the first request. A visitor who stumbles on
+# the link unprompted will still see a cold start - there's no free-tier way around that with 8
+# separate services.
 name: Tick background services
 
 on:
@@ -46,3 +58,19 @@ jobs:
     steps:
       - name: Tick recommender (retrain ALS model)
         run: curl -fsS --max-time 600 -X POST "https://shadow-listens-recommender.onrender.com/tick"
+
+  warm-front-services:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake frontend, auth, catalogue, stream, gateway
+        run: |
+          for url in \
+            https://shadow-listens-frontend.onrender.com/ \
+            https://shadow-listens-auth.onrender.com/health \
+            https://shadow-listens-catalogue.onrender.com/health \
+            https://shadow-listens-stream.onrender.com/health \
+            https://shadow-listens-gateway.onrender.com/healthz; do
+            curl -fsS -o /dev/null --max-time 120 --retry 2 --retry-delay 5 "$url" &
+          done
+          wait
