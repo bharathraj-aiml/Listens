@@ -1,17 +1,28 @@
 # Render variant of nginx.conf: locally, docker-compose gives every service a fixed name
-# ("auth", "catalogue", ...) on one Docker network; on Render each service is deployed
-# separately and only reachable at whatever internal address Render assigns it, so those
-# addresses are filled in at container start (envsubst, see Dockerfile.render) from env vars
-# you set on this gateway service once the other services are deployed.
+# ("auth", "catalogue", ...) on one Docker network; on Render's free tier there's no private
+# networking between services (confirmed - the "Connect" panel only shows outbound IPs, no
+# internal address), so each upstream here is the OTHER service's real public
+# https://*.onrender.com URL instead, filled in at container start (envsubst, see
+# Dockerfile.render) from env vars set on this gateway service.
+#
+# Two things proxying to a public https:// upstream needs that a same-network http:// upstream
+# wouldn't:
+#   - proxy_ssl_server_name on: sends SNI on the outbound TLS handshake. Render's edge is
+#     multi-tenant (many services share IPs, routed by hostname via SNI/Host) - without this,
+#     nginx's upstream TLS client doesn't indicate which hostname it wants, and Render has
+#     nothing to route on.
+#   - Host header set to $proxy_host (the upstream's own host:port, auto-derived by nginx from
+#     whatever $up resolves to) instead of $host (the gateway's OWN incoming Host) - Render's
+#     edge also routes on the Host header, so forwarding the gateway's own hostname here would
+#     point it at the wrong service.
 #
 # Upstreams are referenced through "set $up ...; proxy_pass $up;" rather than a plain
-# "proxy_pass http://host:port;" - a static proxy_pass resolves its hostname once, at nginx
+# "proxy_pass https://host;" - a static proxy_pass resolves its hostname once, at nginx
 # startup, and refuses to start at all if that name isn't resolvable yet ("host not found in
-# upstream"), which is exactly what happens here if this service's container starts before
-# its sibling services have internal addresses assigned. The $up indirection forces nginx to
-# resolve lazily, per-request, via the resolver below (its IP is read from this container's
-# own /etc/resolv.conf at startup - see Dockerfile.render - since Render's internal resolver
-# address isn't published anywhere to hardcode).
+# upstream"), which is exactly what happened here when this service's container started before
+# its sibling services existed. The $up indirection forces nginx to resolve lazily, per-request,
+# via the resolver below (its IP is read from this container's own /etc/resolv.conf at startup -
+# see Dockerfile.render - since Render's internal resolver address isn't published to hardcode).
 worker_processes auto;
 events { worker_connections 1024; }
 
@@ -31,7 +42,8 @@ http {
     listen ${PORT};
 
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_ssl_server_name on;
+    proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;

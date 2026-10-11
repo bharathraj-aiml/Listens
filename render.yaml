@@ -8,12 +8,11 @@
 # tab -> "Linked Environment Groups" -> select shadow-listens-shared -> Link. One-time, six
 # clicks total; it's not something a render.yaml edit can do.
 #
-# STILL UNVERIFIED: the AUTH_UPSTREAM/CATALOGUE_UPSTREAM/STREAM_UPSTREAM/FRONTEND_UPSTREAM
-# values below assume Render's internal service address is "http://<service-name>:<port>".
-# The gateway resolves these lazily per-request (not at startup - see
-# nginx.render.conf.template), so a wrong hostname shows up as 502s on specific routes rather
-# than the whole service crash-looping. If that happens, check each backend service's
-# "Internal Address" in the Render dashboard and fix these values to match.
+# The AUTH_UPSTREAM/CATALOGUE_UPSTREAM/STREAM_UPSTREAM/FRONTEND_UPSTREAM values below point at
+# each service's real public https://*.onrender.com URL. Render's free tier has no private
+# networking between services (confirmed live - a service's "Connect" panel only shows outbound
+# IPs, there's no internal address at all), so this gateway reaches its siblings the same way
+# any other client on the internet would, just like a browser would reach them directly.
 #
 # First-deploy order: deploy `shadow-listens-auth` alone first (it runs the DB migration at
 # startup - see services/auth/Dockerfile.render) and wait for it to go live, THEN deploy the
@@ -145,10 +144,10 @@ services:
       - key: PORT
         value: "10000"
       - key: AUTH_UPSTREAM
-        value: http://shadow-listens-auth:8000
+        value: https://shadow-listens-auth.onrender.com
       - key: CATALOGUE_UPSTREAM
-        value: http://shadow-listens-catalogue:8000
+        value: https://shadow-listens-catalogue.onrender.com
       - key: STREAM_UPSTREAM
-        value: http://shadow-listens-stream:8000
+        value: https://shadow-listens-stream.onrender.com
       - key: FRONTEND_UPSTREAM
-        value: http://shadow-listens-frontend:3000
+        value: https://shadow-listens-frontend.onrender.com
