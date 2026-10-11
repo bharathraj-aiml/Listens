@@ -18,11 +18,14 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
-    # Object storage (MinIO locally; any S3-compatible service in the cloud).
+    # Object storage: Backblaze B2 (S3-compatible API). "auto" addressing picks virtual-hosted
+    # style for a real DNS endpoint (what B2 expects) and falls back to path-style automatically
+    # when the endpoint is an IP:port (the in-process moto server the test suite uses).
     s3_endpoint_url: str = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    s3_access_key: str = "test"
+    s3_secret_key: str = "test"
     s3_region: str = "us-east-1"
+    s3_addressing_style: str = "auto"
     s3_bucket_audio: str = "listens-audio"
     s3_bucket_covers: str = "listens-covers"
 

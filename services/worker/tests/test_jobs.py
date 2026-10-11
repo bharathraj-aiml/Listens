@@ -27,8 +27,13 @@ def test_process_track_end_to_end(env):
     assert f"hls/{tid}/q160/seg_001.ts" in got
     assert not any("/q320/" in k for k in got)  # 192k source -> no 320k rendition
     assert keys(env, env.cfg.s3_bucket_covers) == [f"tracks/{tid}.jpg"]
-    ctype = env.s3.head_object(Bucket=env.cfg.s3_bucket_audio, Key=f"hls/{tid}/master.m3u8")["ContentType"]
-    assert ctype == "application/vnd.apple.mpegurl"
+    playlist = env.s3.head_object(Bucket=env.cfg.s3_bucket_audio, Key=f"hls/{tid}/master.m3u8")
+    assert playlist["ContentType"] == "application/vnd.apple.mpegurl"
+    assert playlist["CacheControl"] == jobs.CACHE_CONTROL[".m3u8"]
+    segment = env.s3.head_object(Bucket=env.cfg.s3_bucket_audio, Key=f"hls/{tid}/q160/seg_001.ts")
+    assert segment["CacheControl"] == jobs.CACHE_CONTROL[".ts"]
+    cover = env.s3.head_object(Bucket=env.cfg.s3_bucket_covers, Key=f"tracks/{tid}.jpg")
+    assert cover["CacheControl"] == jobs.COVER_CACHE_CONTROL
 
 
 def test_process_is_idempotent_and_skips_non_uploaded(env):

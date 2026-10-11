@@ -7,7 +7,7 @@ the next starts.
 
 - ✅ **Phase 1 – Foundation:** monorepo, Docker Compose stack, Alembic schema, auth service
   (JWT access + rotating refresh tokens), API gateway.
-- ✅ **Phase 2 – Catalogue & streaming:** upload → MinIO → FFmpeg → HLS (96/160/320 kbps), signed
+- ✅ **Phase 2 – Catalogue & streaming:** upload → Backblaze B2 → FFmpeg → HLS (96/160/320 kbps), signed
   short-lived stream URLs, web player (queue, seek, volume, quality, prefetch, persistent mini-player), full-text search.
 - ✅ **Phase 3 – Library & social:** playlists (CRUD, reorder, collaborative), likes, follows,
   recently played, Home sections (recently played / made for you / new uploads), synced lyrics.
@@ -22,7 +22,7 @@ the next starts.
 
 ```
 .
-├── docker-compose.yml          # postgres, redis, minio, migrate, auth, catalogue, stream, worker, events, recommender, frontend, gateway
+├── docker-compose.yml          # postgres, redis, migrate, auth, catalogue, stream, worker, events, recommender, frontend, gateway
 ├── .env.example                # copy to .env
 ├── gateway/nginx.conf          # single entry point (:8080): /api/auth, /api/catalogue, /api/stream, / -> web app
 ├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper
@@ -31,31 +31,30 @@ the next starts.
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
 │   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events ingest, analytics, recommendations
-│   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage
+│   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage (Range/206 + Cache-Control pass-through)
 │   ├── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art + librosa audio features
 │   ├── events/                  # Redis-Stream consumer: play/skip events -> play_events rows
 │   └── recommender/              # scheduled job: builds the interaction matrix, trains ALS, writes user/track vectors
 ├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ Playwright e2e)
-└── scripts/import_folder.py    # bulk-import a music folder through the public API
+└── scripts/
+    ├── import_folder.py        # bulk-import a music folder through the public API
+    └── setup_b2_cors.py        # one-off: apply CORS rules to the B2 audio/covers buckets
 ```
 
 ## Run
 
+Object storage is **Backblaze B2** (S3-compatible API, not a compose service) — create a private
+bucket each for audio and covers, and an Application Key (Read and Write) in the B2 console first.
+
 ```bash
-cp .env.example .env            # change JWT_SECRET and STREAM_SIGNING_SECRET if this will leave your machine
+cp .env.example .env            # change JWT_SECRET/STREAM_SIGNING_SECRET, and fill in the real S3_* values for your B2 account+buckets
 docker compose up --build
 ```
 
 Open **http://localhost:8080**, register, go to **Upload**, and add a few files. Status goes
 *Queued → Processing… → Ready* as the worker transcodes (seconds per track). Then play them from **Home**.
-MinIO console (dev only): http://localhost:9001.
 
 Scale transcoding with more workers: `docker compose up --scale worker=3`.
-
-> **Note on MinIO:** the official `minio/minio` Docker Hub image now requires a paid login (MinIO
-> restricted free public pulls in 2025). The compose file uses `bitnamilegacy/minio` instead — same
-> `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` env vars, and it auto-creates the audio/covers buckets
-> via `MINIO_DEFAULT_BUCKETS` on first boot, so no separate init container is needed.
 
 ### Import your music folder
 

@@ -9,7 +9,7 @@ import re
 import uuid
 
 from botocore.exceptions import ClientError
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -79,34 +79,62 @@ def _verify(settings: Settings, token: str, kind: str) -> uuid.UUID:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or expired link") from None
 
 
-def _stream_object(bucket: str, key: str, content_type: str) -> StreamingResponse:
+def _stream_object(bucket: str, key: str, content_type: str, range_header: str | None) -> StreamingResponse:
+    kwargs = {"Bucket": bucket, "Key": key}
+    if range_header:
+        kwargs["Range"] = range_header
     try:
-        obj = get_s3().get_object(Bucket=bucket, Key=key)
+        obj = get_s3().get_object(**kwargs)
     except ClientError as exc:
-        if exc.response["Error"]["Code"] in ("NoSuchKey", "404"):
+        code = exc.response["Error"]["Code"]
+        if code in ("NoSuchKey", "404"):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found") from None
+        if code in ("InvalidRange", "416"):
+            raise HTTPException(status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, "Invalid range") from None
         raise
+    content_range = obj.get("ContentRange")
     headers = {
         "Content-Length": str(obj["ContentLength"]),
-        # The token in the URL is the credential, so caches must stay per-user ("private").
-        "Cache-Control": "private, max-age=3600",
+        "Accept-Ranges": "bytes",
+        # The object's own Cache-Control (set by the worker at upload time - see jobs.py) is
+        # forwarded as-is, so segments/playlists/covers cache the way they were meant to even
+        # behind a CDN later. Objects uploaded before that existed fall back to a safe default:
+        # the token in the URL is the credential, so an unlabeled object stays per-user ("private").
+        "Cache-Control": obj.get("CacheControl") or "private, max-age=3600",
     }
-    return StreamingResponse(obj["Body"].iter_chunks(64 * 1024), media_type=content_type, headers=headers)
+    if content_range:
+        headers["Content-Range"] = content_range
+    # Content-Type is NOT taken from the object's own S3 metadata: any object without one
+    # explicitly set comes back as "binary/octet-stream" (B2 and moto both do this), which would
+    # silently break playback. The path whitelist already tells us exactly what each object is,
+    # so that's the only source of truth here.
+    return StreamingResponse(
+        obj["Body"].iter_chunks(64 * 1024),
+        status_code=status.HTTP_206_PARTIAL_CONTENT if content_range else status.HTTP_200_OK,
+        media_type=content_type,
+        headers=headers,
+    )
 
 
 @app.get("/hls/{token}/{path:path}")
-def hls(token: str, path: str, settings: Settings = Depends(get_settings)) -> StreamingResponse:
+def hls(
+    token: str, path: str, settings: Settings = Depends(get_settings),
+    range_header: str | None = Header(None, alias="Range"),
+) -> StreamingResponse:
     track_id = _verify(settings, token, "hls")
     if not HLS_PATH.match(path):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     ext = "." + path.rsplit(".", 1)[1]
-    return _stream_object(settings.s3_bucket_audio, f"hls/{track_id}/{path}", CONTENT_TYPES[ext])
+    return _stream_object(settings.s3_bucket_audio, f"hls/{track_id}/{path}", CONTENT_TYPES[ext], range_header)
 
 
 @app.get("/cover/{token}")
-def cover(token: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> StreamingResponse:
+def cover(
+    token: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+    range_header: str | None = Header(None, alias="Range"),
+) -> StreamingResponse:
     track_id = _verify(settings, token, "cover")
     track = db.get(Track, track_id)
     if track is None or not track.cover_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-    return _stream_object(settings.s3_bucket_covers, track.cover_key, "image/jpeg")
+    return _stream_object(settings.s3_bucket_covers, track.cover_key, "image/jpeg", range_header)

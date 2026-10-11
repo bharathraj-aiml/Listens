@@ -44,6 +44,27 @@ def test_signed_url_serves_master_and_relative_segments(env):
     assert seg.headers["content-length"] == "1000"
 
 
+def test_cache_control_is_forwarded_from_the_object_and_range_requests_return_206(env):
+    # Simulates an object the worker uploaded with its own Cache-Control (see worker/app/jobs.py) -
+    # the stream service must forward it verbatim rather than overriding it, and support Range.
+    b = env.settings_.s3_bucket_audio
+    key = f"hls/{env.ids['ready']}/q96/seg_001.ts"
+    env.s3.put_object(Bucket=b, Key=key, Body=b"\x47" * 2000, ContentType="video/mp2t",
+                       CacheControl="public, max-age=31536000, immutable")
+    base = get_url(env).json()["url"].removeprefix("/api/stream").rsplit("/", 1)[0]
+
+    full = env.client.get(base + "/q96/seg_001.ts")
+    assert full.status_code == 200
+    assert full.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert full.headers["accept-ranges"] == "bytes"
+
+    ranged = env.client.get(base + "/q96/seg_001.ts", headers={"Range": "bytes=0-99"})
+    assert ranged.status_code == 206
+    assert len(ranged.content) == 100
+    assert ranged.headers["content-range"] == "bytes 0-99/2000"
+    assert ranged.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
 def test_path_whitelist_blocks_other_objects_and_traversal(env):
     put_hls(env, env.ids["ready"])
     base = get_url(env).json()["url"].removeprefix("/api/stream").rsplit("/", 1)[0]

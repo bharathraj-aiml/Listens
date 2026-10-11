@@ -1,4 +1,5 @@
-"""Thin S3 wrapper (boto3). Works against MinIO locally and R2/B2/S3 in the cloud."""
+"""Thin S3 wrapper (boto3). Targets Backblaze B2's S3-compatible API in production; the test
+suite points the same client at an in-process moto server instead (see listens_common.testing)."""
 from functools import lru_cache
 
 import boto3
@@ -16,8 +17,7 @@ def get_s3():
         aws_access_key_id=s.s3_access_key,
         aws_secret_access_key=s.s3_secret_key,
         region_name=s.s3_region,
-        # path-style: http://minio:9000/bucket/key (virtual-host style needs DNS for the bucket)
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}, retries={"max_attempts": 3}),
+        config=Config(signature_version="s3v4", s3={"addressing_style": s.s3_addressing_style}, retries={"max_attempts": 3}),
     )
 
 

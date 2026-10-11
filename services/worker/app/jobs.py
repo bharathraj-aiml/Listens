@@ -29,6 +29,13 @@ from . import audio_features, transcode
 
 log = logging.getLogger("worker")
 
+# HLS segments are content-addressed by track id + hash-free sequence number and never change
+# once written (a re-transcode deletes the old prefix first - see delete_prefix below), so they're
+# safe to cache for a year. Playlists are small and rarely re-fetched, but must-revalidate keeps a
+# stale master.m3u8 from lingering if a track is ever reprocessed. Covers change even less often.
+CACHE_CONTROL = {".m3u8": "public, max-age=3600, must-revalidate", ".ts": "public, max-age=31536000, immutable"}
+COVER_CACHE_CONTROL = "public, max-age=86400"
+
 STREAM = "jobs:transcode"
 GROUP = "transcoders"
 MAX_ATTEMPTS = 3
@@ -73,13 +80,14 @@ def process_track(db: Session, s3, settings: Settings, track_id) -> str:
             if f.is_file():
                 ctype = "application/vnd.apple.mpegurl" if f.suffix == ".m3u8" else "video/mp2t"
                 s3.upload_file(str(f), settings.s3_bucket_audio, f"{prefix}/{f.relative_to(out).as_posix()}",
-                               ExtraArgs={"ContentType": ctype})
+                               ExtraArgs={"ContentType": ctype, "CacheControl": CACHE_CONTROL[f.suffix]})
 
         cover_key = None
         cover = tmp_dir / "cover.jpg"
         if transcode.extract_cover(src, cover):
             cover_key = f"tracks/{track_id}.jpg"
-            s3.upload_file(str(cover), settings.s3_bucket_covers, cover_key, ExtraArgs={"ContentType": "image/jpeg"})
+            s3.upload_file(str(cover), settings.s3_bucket_covers, cover_key,
+                           ExtraArgs={"ContentType": "image/jpeg", "CacheControl": COVER_CACHE_CONTROL})
 
         features = audio_features.extract_features(src)
 
