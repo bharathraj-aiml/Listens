@@ -56,6 +56,15 @@ curl -sI -H "Origin: https://shadow-listens.shadow-listens.workers.dev" "<worker
 
 `Cf-Cache-Status: MISS` the first time, `HIT` after. Hits do not touch Backblaze at all.
 
+## Verifying the deployed Worker against real Backblaze
+
+```
+set -a; source .env.prod; set +a; export PYTHONUTF8=1
+.venv/Scripts/python cdn/test/verify_live.py
+```
+
+Picks a real ready track, signs links with the production secret, and checks master/variant/segment/cover, CORS, the forged-link refusal, and that the second read is a cache `HIT` (also for a different user's link). Exit code 2 means Backblaze is still refusing reads (daily cap), 0 means everything passed.
+
 ## Tests
 
 ```
