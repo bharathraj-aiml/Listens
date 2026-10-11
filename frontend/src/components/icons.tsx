@@ -1,5 +1,5 @@
 import {
-  Bell, CaretDown, CaretRight, CaretUp, ChartBar, ChartLineUp, ClockCounterClockwise, CloudArrowDown, DeviceMobile, Disc,
+  ArrowLeft, Bell, CaretDown, CaretRight, CaretUp, ChartBar, ChartLineUp, ClockCounterClockwise, CloudArrowDown, DeviceMobile, Disc,
   Gear, Heart, House, IdentificationCard, Info, Lock, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus,
   Queue, Repeat, RepeatOnce, Shuffle, SkipBack, SkipForward, SlidersHorizontal, Sparkle, SpeakerHigh, SpeakerX,
   TextAlignLeft, Trash, UploadSimple, UserCircle, Waveform, X,
@@ -25,6 +25,7 @@ export const HomeIcon = wrap(House);
 export const SearchIcon = wrap(MagnifyingGlass);
 export const UploadIcon = wrap(UploadSimple);
 export const CloseIcon = wrap(X);
+export const BackIcon = wrap(ArrowLeft);
 export const PlusIcon = wrap(Plus);
 export const HeartIcon = wrap(Heart);
 export const LyricsIcon = wrap(TextAlignLeft);

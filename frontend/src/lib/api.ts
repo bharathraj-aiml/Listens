@@ -1,3 +1,4 @@
+import { cachedForBackNavigation, clearResponseCache, rememberResponse } from "@/lib/responseCache";
 import { useAuth } from "@/store/auth";
 
 export class ApiError extends Error {
@@ -61,6 +62,18 @@ async function errorFrom(res: Response): Promise<ApiError> {
 }
 
 export async function api<T = unknown>(path: string, init: RequestInit = {}, auth = true): Promise<T> {
+  const isGet = (init.method ?? "GET").toUpperCase() === "GET";
+  if (isGet && auth) {
+    const hit = cachedForBackNavigation<T>(path);
+    if (hit !== undefined) return hit;
+  }
+  if (!isGet) clearResponseCache();
+  const data = await request<T>(path, init, auth);
+  if (isGet && auth && data !== undefined) rememberResponse(path, data);
+  return data;
+}
+
+async function request<T>(path: string, init: RequestInit, auth: boolean): Promise<T> {
   const send = async (token: string | null) => {
     const headers = new Headers(init.headers);
     if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { clearResponseCache } from "@/lib/responseCache";
 import type { User } from "@/lib/types";
 
 const KEY = "listens.auth";
@@ -44,11 +45,13 @@ export const useAuth = create<AuthState>((set) => ({
     set({ ready: true });
   },
   setTokens: (access, refresh) => {
+    clearResponseCache();
     persist(access, refresh);
     set({ accessToken: access, refreshToken: refresh });
   },
   setUser: (user) => set({ user }),
   clear: () => {
+    clearResponseCache();
     persist(null, null);
     set({ accessToken: null, refreshToken: null, user: null });
   },

@@ -3,7 +3,9 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import AmbientBackdrop from "@/components/AmbientBackdrop";
+import BackButton from "@/components/BackButton";
 import LyricsPanel from "@/components/LyricsPanel";
+import NavHistory from "@/components/NavHistory";
 import NowPlayingSheet from "@/components/NowPlayingSheet";
 import PlayerBar from "@/components/PlayerBar";
 import PlayerEngine from "@/components/PlayerEngine";
@@ -41,8 +43,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh md:pl-60">
       <AmbientBackdrop />
+      <NavHistory />
       <Sidebar />
       <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">
+        <BackButton />
         <div key={pathname} className="animate-fade-in">{children}</div>
       </main>
       <PlayerBar />
