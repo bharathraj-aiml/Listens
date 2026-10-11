@@ -1,11 +1,13 @@
 # Render variant of the gateway: same nginx.conf shape as local docker-compose, but the
 # upstream addresses and listen port are filled in from env vars at container start (envsubst)
-# instead of being fixed docker-compose service names. See nginx.render.conf.template for the
-# "needs verification on first deploy" caveat about Render's internal hostnames.
+# instead of being fixed docker-compose service names.
 FROM nginx:1.27-alpine
 RUN apk add --no-cache gettext
 COPY gateway/nginx.render.conf.template /etc/nginx/nginx.conf.template
-# IMPORTANT: envsubst is given an explicit variable list. Without it, envsubst would also try
-# to substitute nginx's OWN $variables ($remote_addr, $http_upgrade, $host, ...), blanking them
-# out and breaking the config - only these five are ours.
-CMD sh -c "envsubst '\$PORT \$AUTH_UPSTREAM \$CATALOGUE_UPSTREAM \$STREAM_UPSTREAM \$FRONTEND_UPSTREAM' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
+# RESOLVER_IP: read from this container's own /etc/resolv.conf (Render's internal DNS resolver
+# address isn't published anywhere to hardcode) - needed so nginx resolves upstream hostnames
+# lazily per-request instead of once at startup (see nginx.render.conf.template for why that
+# matters). IMPORTANT: envsubst is given an explicit variable list - without it, envsubst would
+# also try to substitute nginx's OWN $variables ($remote_addr, $http_upgrade, $host, ...),
+# blanking them out and breaking the config.
+CMD sh -c "RESOLVER_IP=$(awk '/^nameserver/{print \$2; exit}' /etc/resolv.conf) && export RESOLVER_IP && envsubst '\$PORT \$RESOLVER_IP \$AUTH_UPSTREAM \$CATALOGUE_UPSTREAM \$STREAM_UPSTREAM \$FRONTEND_UPSTREAM' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
