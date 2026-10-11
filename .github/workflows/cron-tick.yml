@@ -6,11 +6,8 @@
 # GitHub Actions schedules are "best effort" and the platform doesn't allow more than once every
 # 5 minutes, so that's the floor here - a real backlog may take a few ticks to fully drain.
 #
-# Needs these repo secrets set (Settings -> Secrets and variables -> Actions) once the Render
-# services are deployed and you have their real URLs - not filled in here, no placeholders:
-#   WORKER_TICK_URL       e.g. https://shadow-listens-worker.onrender.com
-#   EVENTS_TICK_URL       e.g. https://shadow-listens-events.onrender.com
-#   RECOMMENDER_TICK_URL  e.g. https://shadow-listens-recommender.onrender.com
+# The three service URLs are public (not secrets), so they're written inline below - no
+# repo secrets needed. If a service is renamed or moved, update them here.
 name: Tick background services
 
 on:
@@ -25,13 +22,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Tick worker (drain transcode queue)
-        run: curl -fsS -X POST "${{ secrets.WORKER_TICK_URL }}/tick?max_seconds=240"
+        run: curl -fsS --max-time 300 -X POST "https://shadow-listens-worker.onrender.com/tick?max_seconds=240"
       - name: Tick events (drain play-event queue)
-        run: curl -fsS -X POST "${{ secrets.EVENTS_TICK_URL }}/tick?max_seconds=25"
+        run: curl -fsS --max-time 120 -X POST "https://shadow-listens-events.onrender.com/tick?max_seconds=25"
 
   tick-recommender:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Tick recommender (retrain ALS model)
-        run: curl -fsS -X POST "${{ secrets.RECOMMENDER_TICK_URL }}/tick"
+        run: curl -fsS --max-time 600 -X POST "https://shadow-listens-recommender.onrender.com/tick"
