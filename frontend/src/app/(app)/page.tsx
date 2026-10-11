@@ -1,21 +1,43 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import Cover from "@/components/Cover";
+import { PauseIcon, PlayIcon } from "@/components/icons";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
+import TrackShelf, { ShelfSkeleton } from "@/components/TrackShelf";
 import { get } from "@/lib/api";
 import type { Track } from "@/lib/types";
 import { useAuth } from "@/store/auth";
+import { currentTrack, usePlayer } from "@/store/player";
 
-function Section({ id, title, tracks }: { id: string; title: string; tracks: Track[] }) {
-  if (!tracks.length) return null;
+const PREVIEW_COUNT = 10;
+
+/** Jump back in: the last track you played, one tap to resume it with your recents as the queue. */
+function Resume({ tracks }: { tracks: Track[] }) {
+  const playQueue = usePlayer((s) => s.playQueue);
+  const toggle = usePlayer((s) => s.toggle);
+  const playing = usePlayer((s) => s.playing);
+  const current = usePlayer(currentTrack);
+  const last = tracks.find((t) => t.status === "ready");
+  if (!last) return null;
+  const active = current?.id === last.id;
+
   return (
-    <section aria-labelledby={id}>
-      <div className="mb-2 flex items-center justify-between">
-        <h2 id={id} className="text-lg font-medium">{title}</h2>
-        <PlayAllButton tracks={tracks} />
+    <div className="glass-card flex items-center gap-3 rounded-2xl border border-line bg-panel p-3" data-testid="resume-card">
+      <Cover id={last.id} url={last.cover_url} size={56} className="rounded-xl" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{last.title}</div>
+        <div className="truncate text-sm text-muted">{last.artist.name}</div>
       </div>
-      <TrackList tracks={tracks} />
-    </section>
+      <button
+        aria-label={active && playing ? "Pause" : `Resume ${last.title}`}
+        onClick={() => (active ? toggle() : playQueue(tracks.filter((t) => t.status === "ready"), 0))}
+        className="flex size-12 shrink-0 items-center justify-center rounded-full bg-accent text-ink transition-transform hover:brightness-110 active:scale-95"
+      >
+        {active && playing ? <PauseIcon /> : <PlayIcon />}
+      </button>
+    </div>
   );
 }
 
@@ -25,6 +47,7 @@ export default function Home() {
   const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>([]);
   const [madeForYou, setMadeForYou] = useState<Track[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     get<Track[]>("/api/catalogue/tracks?limit=100").then(setTracks).catch((e) => setError(e.message));
@@ -32,24 +55,59 @@ export default function Home() {
     get<Track[]>("/api/catalogue/home/made-for-you").then(setMadeForYou).catch(() => {});
   }, []);
 
+  const visible = tracks && !showAll ? tracks.slice(0, PREVIEW_COUNT) : tracks;
+  const hidden = tracks ? tracks.length - PREVIEW_COUNT : 0;
+
   return (
     <div className="space-y-8">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">
           Good listening{user ? `, ${user.display_name}` : ""}
         </h1>
-        <p className="text-sm text-muted">Everything in your library</p>
+        <p className="text-sm text-muted">Pick up where you left off, or find something new.</p>
       </header>
+
       {error && <p role="alert" className="text-danger">{error}</p>}
-      {tracks === null && !error && <p className="text-muted">Loading…</p>}
-      {tracks && tracks.length === 0 && (
-        <div className="rounded-xl border border-dashed border-line p-8 text-center text-muted">
-          No music yet. <a href="/upload" className="text-accent underline">Upload some</a> to get started.
+
+      <Resume tracks={recentlyPlayed} />
+
+      {tracks === null && !error && (
+        <div className="space-y-8" role="status" aria-label="Loading your library">
+          <ShelfSkeleton />
+          <ShelfSkeleton />
         </div>
       )}
-      <Section id="recently-played" title="Recently played" tracks={recentlyPlayed} />
-      <Section id="made-for-you" title="Made for you" tracks={madeForYou} />
-      {tracks && tracks.length > 0 && <Section id="new" title="New uploads" tracks={tracks} />}
+
+      <TrackShelf id="recently-played" title="Recently played" tracks={recentlyPlayed} />
+      <TrackShelf id="made-for-you" title="Made for you" tracks={madeForYou} />
+
+      {tracks && tracks.length === 0 && (
+        <div className="glass-card rounded-2xl border border-dashed border-line p-8 text-center text-muted">
+          No music yet.{" "}
+          <Link href="/upload" className="text-accent underline">Upload some</Link> to get started.
+        </div>
+      )}
+
+      {visible && visible.length > 0 && (
+        <section aria-labelledby="new">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="new" className="text-lg font-semibold tracking-tight">New uploads</h2>
+            <PlayAllButton tracks={tracks ?? []} />
+          </div>
+          <div className="glass-card rounded-2xl border border-line bg-panel p-1">
+            <TrackList tracks={visible} />
+          </div>
+          {hidden > 0 && (
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              aria-expanded={showAll}
+              className="mt-3 w-full rounded-full border border-line py-2.5 text-sm text-muted transition-colors hover:bg-raise hover:text-fg"
+            >
+              {showAll ? "Show fewer" : `Show all ${tracks!.length} tracks`}
+            </button>
+          )}
+        </section>
+      )}
     </div>
   );
 }
