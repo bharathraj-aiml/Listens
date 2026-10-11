@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
+import AmbientBackdrop from "@/components/AmbientBackdrop";
 import LyricsPanel from "@/components/LyricsPanel";
 import NowPlayingSheet from "@/components/NowPlayingSheet";
 import PlayerBar from "@/components/PlayerBar";
@@ -39,6 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh md:pl-60">
+      <AmbientBackdrop />
       <Sidebar />
       <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">
         <div key={pathname} className="animate-fade-in">{children}</div>

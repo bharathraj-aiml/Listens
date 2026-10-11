@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   description: "Your private music streaming server",
   icons: { icon: "/favicon.svg" },
 };
-export const viewport: Viewport = { themeColor: "#0b0b12", width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { themeColor: "#0c0d11", width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

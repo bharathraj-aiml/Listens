@@ -50,7 +50,7 @@ export default function AddToPlaylistMenu({ trackId, trackTitle }: { trackId: st
         <PlaylistIcon width={18} height={18} />
       </button>
       {open && (
-        <div data-testid="add-to-playlist-menu" className="glass-surface absolute right-0 top-full z-50 mt-1 w-56 rounded-xl p-1">
+        <div data-testid="add-to-playlist-menu" className="glass-surface absolute right-0 top-full z-50 mt-1 w-56 rounded-2xl p-1">
           {playlists === null && <div className="px-3 py-2 text-xs text-muted">Loading…</div>}
           {playlists?.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted">No playlists yet. Create one from the Playlists page.</div>

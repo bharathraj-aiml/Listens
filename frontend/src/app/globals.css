@@ -1,20 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #0b0b12;
+  --color-ink: #0c0d11;
   /* Glass tokens: translucent whites over the ambient backdrop instead of opaque greys, so every
      card/input/row that already uses panel/raise/line picks up the liquid-glass look. */
   --color-panel: rgb(255 255 255 / 0.07);
   --color-raise: rgb(255 255 255 / 0.11);
   --color-line: rgb(255 255 255 / 0.14);
-  --color-fg: #ececf5;
-  --color-muted: #9a9ab5;
-  /* Single accent (was split across two hues, purple #8b7bff + amber #ffb86b - the purple read as
-     the generic "AI app" default). One warm accent against the cool near-black neutrals: light
-     cutting through shadow, which is also just what the name "Shadow Listens" is about. */
-  --color-accent: #ffb86b;
-  --color-danger: #ff6b81;
-  --color-ok: #5fd39a;
+  --color-fg: #eceef2;
+  --color-muted: #a6aab6;
+  /* One accent: deep rose, desaturated below 80% so it sits with the neutrals instead of
+     glowing. Dark ink text on it measures ~5.9:1 (AA); as text on the graphite base ~5.3:1.
+     The base is hue-neutral graphite on purpose: all the colour in the UI comes from this
+     accent and from the playing cover (see AmbientBackdrop), never from a decorative gradient.
+     Shape scale used everywhere: pill for buttons, 16px (rounded-2xl) for panels/cards/menus,
+     8px (rounded-lg) for inputs and list rows. */
+  --color-accent: #f0587a;
+  --color-danger: #ff9a5c;
+  --color-ok: #4fe0b0;
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -23,18 +26,15 @@ html { background: var(--color-ink); }
 body { color: var(--color-fg); font-family: var(--font-sans); min-height: 100dvh; }
 * { scrollbar-width: thin; scrollbar-color: var(--color-line) transparent; }
 
-/* Ambient colour field the glass blurs against. Fixed so it doesn't scroll with content. */
+/* Resting backdrop (login, nothing playing): graphite with one faint accent glow. While a
+   track plays, AmbientBackdrop layers the cover's own colour over this. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   pointer-events: none;
-  background:
-    radial-gradient(60vmax 50vmax at 10% -5%, rgba(255, 184, 107, 0.28), transparent 60%),
-    radial-gradient(55vmax 50vmax at 95% 10%, rgba(139, 123, 255, 0.24), transparent 60%),
-    radial-gradient(60vmax 55vmax at 70% 105%, rgba(255, 107, 129, 0.20), transparent 60%),
-    radial-gradient(50vmax 45vmax at 0% 95%, rgba(64, 200, 190, 0.16), transparent 60%);
+  background: radial-gradient(70vmax 55vmax at 12% -8%, rgba(240, 88, 122, 0.12), transparent 60%);
 }
 
 input[type="range"] { accent-color: var(--color-accent); }
@@ -64,13 +64,16 @@ button:not(:disabled) { cursor: pointer; }
     inset 0 -1px 0 rgba(255, 255, 255, 0.06),
     0 10px 32px rgba(0, 0, 0, 0.35);
 }
+/* Web approximation of a frosted/"liquid" glass material (backdrop-filter, highlight and edge
+   layers). Apple's Liquid Glass is an Apple-platform material; there is no official web version. */
 /* Chrome surfaces (sidebar, tab bar, player bar, side panels, menus): darker tint than .glass so
    text stays legible over busy album art and the backdrop. Edge is an inset ring, not a border,
    so it composes with any rounding. */
 .glass-surface {
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
-    rgba(16, 16, 26, 0.5);
+    radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.16), transparent 55%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(18, 19, 24, 0.6);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
   backdrop-filter: blur(30px) saturate(180%);
   box-shadow:
