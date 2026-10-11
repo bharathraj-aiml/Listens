@@ -129,3 +129,13 @@ def test_sessions_endpoints_require_auth(client):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_registration_can_be_closed_but_login_still_works(client, registered):
+    get_settings().allow_registration = False
+    try:
+        r = client.post("/register", json={**USER, "username": "intruder", "email": "x@example.com"})
+        assert r.status_code == 403
+        assert client.post("/login", json={"identifier": USER["email"], "password": USER["password"]}).status_code == 200
+    finally:
+        get_settings().allow_registration = True

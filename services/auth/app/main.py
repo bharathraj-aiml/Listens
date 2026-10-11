@@ -59,7 +59,11 @@ def health() -> dict:
 
 
 @app.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def register(body: RegisterIn, db: Session = Depends(get_db)) -> User:
+def register(
+    body: RegisterIn, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> User:
+    if not settings.allow_registration:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed")
     email = body.email.lower()
     taken = db.scalar(
         select(User).where(or_(func.lower(User.email) == email, func.lower(User.username) == body.username.lower()))
