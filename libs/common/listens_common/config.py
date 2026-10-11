@@ -13,7 +13,6 @@ class Settings(BaseSettings):
 
     jwt_secret: str = "dev-only-change-me-dev-only-change-me"
     jwt_algorithm: str = "HS256"
-    allow_registration: bool = True  # set ALLOW_REGISTRATION=false to close sign-ups (single-user deploys)
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 7
 
