@@ -122,8 +122,8 @@ function GlassLyrics() {
             step={0.5}
             value={Math.min(p.currentTime, duration || 0)}
             onChange={(e) => p.requestSeek(Number(e.target.value))}
-            style={{ background: `linear-gradient(to right, rgba(255,255,255,0.9) ${progress}%, rgba(255,255,255,0.2) ${progress}%)` }}
-            className="mt-3 block h-1 w-full cursor-pointer appearance-none rounded-full accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white"
+            style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.9) ${progress}%, rgba(255,255,255,0.2) ${progress}%)` }}
+            className="mt-2 block h-8 w-full cursor-pointer appearance-none bg-center bg-no-repeat accent-white [background-size:100%_4px] [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white"
           />
           <div className="mt-2 flex justify-between font-mono text-[11px] tabular-nums text-white/70">
             <span>{formatTime(p.currentTime)}</span>

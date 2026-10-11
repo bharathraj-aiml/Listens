@@ -38,6 +38,11 @@ body::before {
 }
 
 input[type="range"] { accent-color: var(--color-accent); }
+/* On touch screens a 4px slider is nearly impossible to grab: give every range input a 32px tall hit area. The
+   native track stays thin and centred, so it looks the same. */
+@media (pointer: coarse) {
+  input[type="range"] { height: 2rem; }
+}
 :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
 /* Tailwind 4 preflight leaves <button> at the UA default (arrow) cursor, not a hand pointer. */

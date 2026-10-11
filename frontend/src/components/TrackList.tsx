@@ -2,7 +2,7 @@
 
 import AddToPlaylistMenu from "@/components/AddToPlaylistMenu";
 import Cover from "@/components/Cover";
-import { PlayIcon, PlusIcon } from "@/components/icons";
+import { PlayIcon, PlusIcon, TrashIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
 import { formatDuration } from "@/lib/format";
 import type { Track } from "@/lib/types";
@@ -70,12 +70,14 @@ export default function TrackList({ tracks, showStatus = false, onDelete }: Prop
                 )}
                 <span className="truncate">{t.title}</span>
               </div>
-              <div className="truncate text-xs text-muted">{t.artist.name}</div>
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <span className="truncate">{t.artist.name}</span>
+                {showStatus && (
+                  <span data-testid="track-status" className={`shrink-0 rounded-full px-2 py-0.5 ${STATUS_STYLE[t.status]}`}>{STATUS_LABEL[t.status]}</span>
+                )}
+              </div>
               {t.status === "failed" && t.error && <div className="truncate text-xs text-danger" title={t.error}>{t.error}</div>}
             </button>
-            {showStatus && (
-              <span data-testid="track-status" className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[t.status]}`}>{STATUS_LABEL[t.status]}</span>
-            )}
             {ready && (
               // opacity-100 on mobile (no hover state to reveal them on touch); hover-reveal only from sm up
               <div className="flex items-center gap-0.5 opacity-100 sm:opacity-60 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
@@ -87,7 +89,7 @@ export default function TrackList({ tracks, showStatus = false, onDelete }: Prop
             )}
             <span className="hidden w-12 text-right font-mono text-xs tabular-nums text-muted sm:block">{formatDuration(t.duration_ms)}</span>
             {onDelete && (
-              <button aria-label={`Delete ${t.title}`} onClick={() => onDelete(t)} className="rounded px-1.5 py-1 text-xs text-muted hover:text-danger">Delete</button>
+              <button aria-label={`Delete ${t.title}`} title="Delete" onClick={() => onDelete(t)} className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted hover:text-danger"><TrashIcon width={18} height={18} /></button>
             )}
           </li>
         );

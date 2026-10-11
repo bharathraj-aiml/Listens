@@ -68,7 +68,7 @@ export default function PlayerBar() {
             <button
               data-testid="prev" aria-label="Previous" onClick={p.prev}
               onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}
-              className="flex size-11 items-center justify-center rounded-full text-muted hover:text-fg"
+              className="hidden size-11 items-center justify-center rounded-full text-muted hover:text-fg md:flex"
             >
               <PrevIcon />
             </button>
