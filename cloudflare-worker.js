@@ -6,11 +6,14 @@
 // both problems - it gets its own free *.workers.dev subdomain automatically, runs on
 // Cloudflare's edge (including PoPs near India), and can proxy to any origin over the internet.
 //
-// Caching: this relies entirely on the origin's own Cache-Control headers (already set
-// correctly by services/worker/app/jobs.py and services/stream/app/main.py - immutable/1yr for
-// HLS segments, 1hr revalidate for playlists, 1 day for covers) rather than forcing
-// cacheEverything - auth/catalogue responses must never be cached, and trusting Cache-Control
-// is what keeps that distinction correct automatically.
+// Caching: NOT WORKING, verified live. Despite the origin sending correct Cache-Control
+// (immutable/1yr segments - see services/worker/app/jobs.py), every segment came back with
+// CF-Cache-Status: DYNAMIC, i.e. a plain fetch() proxy to a third-party *.onrender.com origin is
+// not cached at the edge. Trying Workers Cache ([cache] enabled in wrangler.toml, which needs
+// the Worker to rewrite response headers) coincided with Cloudflare error 1000 (403) on
+// requests; the cause wasn't isolated (see AGENT_HANDOFF.md section 11), so it was reverted.
+// This Worker is currently a plain pass-through proxy: it gives a Cloudflare-terminated URL
+// but no cache benefit.
 //
 // Known limitation (free tier): Cloudflare Workers caps request bodies at 100MB, below this
 // app's own MAX_UPLOAD_MB=500 setting. Uploads over 100MB will fail through this Worker's URL.
