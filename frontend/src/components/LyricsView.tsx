@@ -23,8 +23,9 @@ function parseLrc(raw: string): LrcLine[] {
 /** The lyrics content itself (fetch + synced/plain/empty rendering), shown in the slide-in
  *  LyricsPanel on desktop and mobile (opened from the Lyrics button). `active` gates the fetch so
  *  a panel that isn't open yet doesn't fetch lyrics for every track in the queue up front. */
-export default function LyricsView({ trackId, active }: { trackId: string | undefined; active: boolean }) {
+export default function LyricsView({ trackId, active, glass = false }: { trackId: string | undefined; active: boolean; glass?: boolean }) {
   const currentTime = usePlayer((s) => s.currentTime);
+  const requestSeek = usePlayer((s) => s.requestSeek);
   const [data, setData] = useState<Lyrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeRef = useRef<HTMLParagraphElement>(null);
@@ -63,10 +64,36 @@ export default function LyricsView({ trackId, active }: { trackId: string | unde
     box.scrollTo({ top: lineMid - box.clientHeight / 2, behavior: "smooth" });
   }, [activeIndex, active]);
 
-  if (!trackId) return <p className="text-sm text-muted">Nothing playing.</p>;
-  if (error) return <p role="alert" className="text-sm text-danger">{error}</p>;
-  if (!data) return <p className="text-sm text-muted">Loading…</p>;
+  const note = glass ? "text-lg font-medium text-white/60" : "text-sm text-muted";
+  if (!trackId) return <p className={note}>Nothing playing.</p>;
+  if (error) return <p role="alert" className={glass ? "text-lg font-medium text-white/80" : "text-sm text-danger"}>{error}</p>;
+  if (!data) return <p className={note}>Loading…</p>;
 
+  if (synced && glass) {
+    // Apple Music style: big bold lines, the current one bright and the rest dimmed and softly
+    // blurred the further they are from it. Tapping a line seeks to it.
+    return (
+      <div className="space-y-6" data-testid="lyrics-synced">
+        {synced.map((line, i) => {
+          const dist = activeIndex < 0 ? 2 : Math.abs(i - activeIndex);
+          return (
+            <p
+              key={i}
+              ref={i === activeIndex ? activeRef : undefined}
+              data-testid={i === activeIndex ? "lyrics-active-line" : undefined}
+              onClick={() => requestSeek(line.time)}
+              style={{ filter: dist === 0 ? "none" : `blur(${Math.min(dist, 3) * 0.6}px)` }}
+              className={`origin-left cursor-pointer text-[1.75rem] font-bold leading-tight transition-all duration-500 ${
+                i === activeIndex ? "scale-100 text-white opacity-100" : "scale-[0.96] text-white opacity-35"
+              }`}
+            >
+              {line.text}
+            </p>
+          );
+        })}
+      </div>
+    );
+  }
   if (synced) {
     return (
       <div className="space-y-3" data-testid="lyrics-synced">
@@ -85,10 +112,10 @@ export default function LyricsView({ trackId, active }: { trackId: string | unde
   }
   if (data.lyrics) {
     return (
-      <p data-testid="lyrics-plain" className="whitespace-pre-line text-base leading-relaxed text-fg">
+      <p data-testid="lyrics-plain" className={`whitespace-pre-line ${glass ? "text-2xl font-bold leading-snug text-white/90" : "text-base leading-relaxed text-fg"}`}>
         {data.lyrics}
       </p>
     );
   }
-  return <p data-testid="lyrics-empty" className="text-sm text-muted">No lyrics available for this track.</p>;
+  return <p data-testid="lyrics-empty" className={note}>No lyrics available for this track.</p>;
 }
