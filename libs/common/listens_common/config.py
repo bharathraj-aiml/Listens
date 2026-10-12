@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+pysqlite:///:memory:"
     redis_url: str = "redis://localhost:6379/0"
+    # Play events are written straight to Postgres by the catalogue so history is current the moment
+    # a song starts (the Render free tier cannot run the always-on consumer; its daily tick left
+    # "Recently played" up to a day behind). True restores the Redis-stream-only path, which the
+    # docker-compose stack's events consumer reads.
+    events_via_queue: bool = False
 
     jwt_secret: str = "dev-only-change-me-dev-only-change-me"
     jwt_algorithm: str = "HS256"

@@ -31,6 +31,7 @@ class TrackOut(BaseModel):
     duration_ms: int | None
     cover_url: str | None
     error: str | None = None
+    played_at: datetime | None = None  # only set on /home/recently-played: when you last listened
     tempo_bpm: float | None = None  # audio analysis; the player's shuffle uses these to order for flow
     energy: float | None = None
     created_at: datetime

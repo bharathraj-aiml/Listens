@@ -1,14 +1,16 @@
-"""Client event ingestion: play_start / play_end / skip -> Redis Stream `jobs:events`.
+"""Client event ingestion: play_start / play_end / skip -> the `play_events` table.
 
-A dedicated `events` service consumes that stream and writes rows into `play_events` (see
-services/events/). Publishing here is fire-and-forget: the HTTP call returns as soon as the
-XADD is acknowledged by Redis, not once the row exists in Postgres - this endpoint is on the
-hot path (every skip, every track change) and shouldn't block on a database round trip.
+Each event is inserted directly, so "Recently played" and the recommender see a play the moment it
+happens. If that insert fails (database asleep or briefly unreachable) the event falls back to the
+Redis Stream `jobs:events`, which the `events` service (services/events/) drains into the same table,
+so a hiccup never loses an event. With EVENTS_VIA_QUEUE=true every event goes to the stream, the
+original design for a stack that runs the always-on consumer (docker-compose).
 
 `like` and `add_to_playlist` events are emitted as a side effect of the existing /likes and
 /playlists/*/tracks endpoints (see library.py), not accepted here - that keeps one source of
 truth for the actual mutation instead of asking the client to make two calls for one action.
 """
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -16,10 +18,15 @@ from typing import Literal
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from redis import Redis
+from sqlalchemy.orm import Session
 
+from listens_common.config import Settings, get_settings
+from listens_common.db import get_db
+from listens_common.models import PlayEvent
 from listens_common.web import current_user_id, get_redis
 
 router = APIRouter()
+log = logging.getLogger("catalogue")
 
 STREAM = "jobs:events"
 
@@ -56,7 +63,19 @@ def publish_event(
 @router.post("/events", status_code=status.HTTP_204_NO_CONTENT)
 def record_event(
     body: ClientEventIn, user_id: uuid.UUID = Depends(current_user_id), r: Redis = Depends(get_redis),
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
 ) -> None:
+    if not settings.events_via_queue:
+        try:
+            db.add(PlayEvent(
+                user_id=user_id, track_id=body.track_id, event_type=body.event_type, ms_played=body.ms_played,
+                position_ms=body.position_ms, reason=body.reason, session_id=body.session_id, occurred_at=datetime.now(UTC),
+            ))
+            db.commit()
+            return
+        except Exception:  # noqa: BLE001 - never lose the event: hand it to the queue instead
+            db.rollback()
+            log.exception("direct play-event insert failed; falling back to the queue")
     publish_event(
         r, event_type=body.event_type, user_id=user_id, track_id=body.track_id,
         ms_played=body.ms_played, position_ms=body.position_ms, reason=body.reason, session_id=body.session_id,

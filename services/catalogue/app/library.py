@@ -295,17 +295,56 @@ def list_followed_users(user_id: uuid.UUID = Depends(current_user_id), db: Sessi
 # Play events (play_start/play_end/skip) now arrive via POST /events -> Redis Stream -> the
 # events service, not a direct write here (see events.py). These read queries are unchanged.
 
+QUICK_SKIP_MS = 8_000  # a song dropped before this was a tap-through, not something you listened to
+
+
+def last_listens(db: Session, user_id: uuid.UUID, limit: int) -> list[tuple[uuid.UUID, datetime]]:
+    """(track id, when you last listened) newest first, for songs you actually listened to.
+
+    A play_start counts unless the same song was skipped within QUICK_SKIP_MS of it. Tapping through a
+    queue to find something therefore does not fill "Recently played" with songs you never heard. A start
+    with no matching end (the song playing right now) counts. Done in Python over the newest events so it
+    behaves identically on Postgres and SQLite."""
+    rows = db.execute(
+        select(PlayEvent.track_id, PlayEvent.event_type, PlayEvent.occurred_at, PlayEvent.position_ms)
+        .where(PlayEvent.user_id == user_id, PlayEvent.event_type.in_(("play_start", "play_end", "skip")))
+        .order_by(PlayEvent.occurred_at.desc()).limit(max(limit * 40, 400))
+    ).all()
+    best: dict[uuid.UUID, datetime] = {}
+    pending: dict[uuid.UUID, datetime | None] = {}
+    for track_id, kind, at, position in reversed(rows):  # oldest first
+        if kind == "play_start":
+            if pending.get(track_id) is not None:  # the previous start never got an end event: it still counts
+                best[track_id] = max(best.get(track_id, pending[track_id]), pending[track_id])
+            pending[track_id] = at
+        elif pending.get(track_id) is not None:
+            if kind == "skip" and position is not None and position < QUICK_SKIP_MS:
+                pending[track_id] = None  # dropped within seconds: not a listen
+            else:
+                best[track_id] = max(best.get(track_id, pending[track_id]), pending[track_id])
+                pending[track_id] = None
+    for track_id, at in pending.items():  # still playing, or never ended
+        if at is not None:
+            best[track_id] = max(best.get(track_id, at), at)
+    return sorted(best.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+
+
 @router.get("/home/recently-played", response_model=list[TrackOut])
 def recently_played(
     limit: int = Query(20, ge=1, le=50), user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
 ) -> list[TrackOut]:
-    latest = select(PlayEvent.track_id, func.max(PlayEvent.occurred_at).label("last_played")).where(
-        PlayEvent.user_id == user_id, PlayEvent.event_type == "play_start",
-    ).group_by(PlayEvent.track_id).order_by(func.max(PlayEvent.occurred_at).desc()).limit(limit).subquery()
-    rows = db.execute(select(Track).join(latest, latest.c.track_id == Track.id)
-                      .where(Track.status == "ready").order_by(latest.c.last_played.desc())).scalars().unique()
-    return [track_out(t, settings, user_id) for t in rows]
+    listens = last_listens(db, user_id, limit * 2)  # headroom: some songs may since have been deleted
+    if not listens:
+        return []
+    tracks = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_([t for t, _ in listens]), Track.status == "ready")).unique()}
+    out = []
+    for track_id, at in listens:
+        if track_id in tracks:
+            item = track_out(tracks[track_id], settings, user_id)
+            item.played_at = at
+            out.append(item)
+    return out[:limit]
 
 
 @router.get("/home/made-for-you", response_model=list[TrackOut])

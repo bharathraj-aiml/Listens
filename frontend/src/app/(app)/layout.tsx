@@ -6,6 +6,7 @@ import AmbientBackdrop from "@/components/AmbientBackdrop";
 import BackButton from "@/components/BackButton";
 import LyricsPanel from "@/components/LyricsPanel";
 import NavHistory from "@/components/NavHistory";
+import RecentsTracker from "@/components/RecentsTracker";
 import NowPlayingSheet from "@/components/NowPlayingSheet";
 import PlayerBar from "@/components/PlayerBar";
 import PlayerEngine from "@/components/PlayerEngine";
@@ -44,6 +45,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-dvh md:pl-60">
       <AmbientBackdrop />
       <NavHistory />
+      <RecentsTracker />
       <Sidebar />
       <main className="mx-auto max-w-6xl px-4 pb-44 pt-6 md:px-8">
         <BackButton />

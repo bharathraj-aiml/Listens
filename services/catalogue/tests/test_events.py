@@ -1,4 +1,10 @@
+import pytest
 from app.events import STREAM
+from app.main import app
+from listens_common.config import get_settings
+from listens_common.db import get_db
+from listens_common.models import PlayEvent
+from sqlalchemy import select
 
 from .test_catalogue import seed
 
@@ -7,7 +13,62 @@ def h(env):
     return env.headers
 
 
-def test_play_start_is_published_to_the_stream(env):
+@pytest.fixture
+def queue_mode():
+    """EVENTS_VIA_QUEUE=true: the original design, every event goes to the Redis stream."""
+    s = get_settings()
+    s.events_via_queue = True
+    yield
+    s.events_via_queue = False
+
+
+def stored(env):
+    with env.sessions() as db:
+        return list(db.scalars(select(PlayEvent).order_by(PlayEvent.id)))
+
+
+def test_event_is_written_straight_to_the_database(env):
+    tid, *_ = seed(env, "Song")
+    r = env.client.post("/events", json={"event_type": "play_start", "track_id": tid, "session_id": "abc"}, headers=h(env))
+    assert r.status_code == 204
+    rows = stored(env)
+    assert len(rows) == 1 and str(rows[0].track_id) == tid and rows[0].user_id == env.user_id
+    assert rows[0].event_type == "play_start" and rows[0].session_id == "abc" and rows[0].occurred_at is not None
+    assert env.redis.xrange(STREAM) == []  # nothing left for the consumer: no daily job needed
+
+
+def test_skip_and_play_end_fields_are_stored(env):
+    tid, *_ = seed(env, "Song")
+    env.client.post("/events", json={"event_type": "skip", "track_id": tid, "position_ms": 5000, "reason": "next_button"}, headers=h(env))
+    env.client.post("/events", json={"event_type": "play_end", "track_id": tid, "ms_played": 42000}, headers=h(env))
+    skip, end = stored(env)
+    assert (skip.position_ms, skip.reason) == (5000, "next_button") and end.ms_played == 42000
+
+
+def test_falls_back_to_the_queue_when_the_database_write_fails(env):
+    tid, *_ = seed(env, "Song")
+
+    class Broken:
+        def add(self, *_):
+            raise RuntimeError("database asleep")
+
+        def commit(self):
+            raise RuntimeError("database asleep")
+
+        def rollback(self):
+            pass
+
+    app.dependency_overrides[get_db] = lambda: Broken()
+    try:
+        r = env.client.post("/events", json={"event_type": "play_start", "track_id": tid}, headers=h(env))
+    finally:
+        pass  # the env fixture clears every override at teardown
+    assert r.status_code == 204
+    jobs = env.redis.xrange(STREAM)
+    assert len(jobs) == 1 and jobs[0][1]["track_id"] == tid  # the event was handed to the queue, not lost
+
+
+def test_play_start_is_published_to_the_stream(env, queue_mode):
     tid, *_ = seed(env, "Song")
     r = env.client.post("/events", json={"event_type": "play_start", "track_id": tid}, headers=h(env))
     assert r.status_code == 204
@@ -21,7 +82,7 @@ def test_play_start_is_published_to_the_stream(env):
     assert "ms_played" not in fields and "reason" not in fields  # omitted, not sent as empty strings
 
 
-def test_play_end_carries_ms_played(env):
+def test_play_end_carries_ms_played(env, queue_mode):
     tid, *_ = seed(env, "Song")
     r = env.client.post("/events", json={"event_type": "play_end", "track_id": tid, "ms_played": 42000}, headers=h(env))
     assert r.status_code == 204
@@ -29,7 +90,7 @@ def test_play_end_carries_ms_played(env):
     assert fields["ms_played"] == "42000"
 
 
-def test_skip_carries_position_and_reason(env):
+def test_skip_carries_position_and_reason(env, queue_mode):
     tid, *_ = seed(env, "Song")
     r = env.client.post(
         "/events", json={"event_type": "skip", "track_id": tid, "position_ms": 5000, "reason": "next_button"}, headers=h(env)

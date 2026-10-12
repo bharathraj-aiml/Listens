@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Cover from "@/components/Cover";
 import { PauseIcon, PlayIcon } from "@/components/icons";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
 import TrackShelf, { ShelfSkeleton } from "@/components/TrackShelf";
 import { get } from "@/lib/api";
+import { mergeRecents } from "@/lib/recents";
 import type { Track } from "@/lib/types";
 import { useAuth } from "@/store/auth";
 import { currentTrack, usePlayer } from "@/store/player";
+import { useRecents } from "@/store/recents";
 
 const PREVIEW_COUNT = 10;
 
@@ -44,16 +46,31 @@ function Resume({ tracks }: { tracks: Track[] }) {
 export default function Home() {
   const user = useAuth((s) => s.user);
   const [tracks, setTracks] = useState<Track[] | null>(null);
-  const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>([]);
+  const [serverRecent, setServerRecent] = useState<Track[]>([]);
+  const localRecent = useRecents((s) => s.items);
+  // What the server remembers plus what this device just played: updates the instant a song counts, no refetch.
+  const recentlyPlayed = useMemo(() => mergeRecents(serverRecent, localRecent), [serverRecent, localRecent]);
   const [madeForYou, setMadeForYou] = useState<Track[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
+  const refreshRecent = useCallback(() => {
+    get<Track[]>("/api/catalogue/home/recently-played").then(setServerRecent).catch(() => {});
+  }, []);
+
   useEffect(() => {
     get<Track[]>("/api/catalogue/tracks?limit=100").then(setTracks).catch((e) => setError(e.message));
-    get<Track[]>("/api/catalogue/home/recently-played").then(setRecentlyPlayed).catch(() => {});
     get<Track[]>("/api/catalogue/home/made-for-you").then(setMadeForYou).catch(() => {});
-  }, []);
+    refreshRecent();
+    // Plays on your other devices show up too: re-sync when you come back to the tab, and every minute while it is open.
+    const onVisible = () => document.visibilityState === "visible" && refreshRecent();
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = setInterval(onVisible, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(timer);
+    };
+  }, [refreshRecent]);
 
   const visible = tracks && !showAll ? tracks.slice(0, PREVIEW_COUNT) : tracks;
   const hidden = tracks ? tracks.length - PREVIEW_COUNT : 0;

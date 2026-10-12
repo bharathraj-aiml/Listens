@@ -12,6 +12,7 @@ export interface Track {
   duration_ms: number | null;
   cover_url: string | null;
   error: string | null;
+  played_at?: string | null; // only on /home/recently-played: when the listener last listened
   tempo_bpm?: number | null; // audio analysis, used by the shuffle to order songs for flow
   energy?: number | null;
   created_at: string;

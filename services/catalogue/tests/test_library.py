@@ -182,6 +182,63 @@ def test_recently_played_ordering(env):
     assert env.client.get("/home/recently-played", headers=env.other_headers).json() == []
 
 
+def record_event(env, user_id, track_id, kind, at, position_ms=None):
+    with env.sessions() as db:
+        db.add(PlayEvent(user_id=user_id, track_id=uuid.UUID(str(track_id)), event_type=kind, position_ms=position_ms, occurred_at=at))
+        db.commit()
+
+
+def recent(env):
+    return env.client.get("/home/recently-played", headers=h(env)).json()
+
+
+def test_recently_played_ignores_songs_skipped_within_seconds(env):
+    heard, *_ = seed(env, "Listened to")
+    tapped, *_ = seed(env, "Tapped through")
+    base = datetime.now(UTC)
+    record_event(env, env.user_id, heard, "play_start", base)
+    record_event(env, env.user_id, heard, "skip", base + timedelta(seconds=40), position_ms=40_000)
+    record_event(env, env.user_id, tapped, "play_start", base + timedelta(seconds=41))
+    record_event(env, env.user_id, tapped, "skip", base + timedelta(seconds=43), position_ms=2_000)
+    assert [t["title"] for t in recent(env)] == ["Listened to"]
+
+
+def test_a_quick_skip_does_not_erase_an_earlier_real_listen_of_the_same_song(env):
+    song, *_ = seed(env, "Replayed")
+    base = datetime.now(UTC)
+    record_event(env, env.user_id, song, "play_start", base)
+    record_event(env, env.user_id, song, "play_end", base + timedelta(minutes=3))
+    record_event(env, env.user_id, song, "play_start", base + timedelta(minutes=5))
+    record_event(env, env.user_id, song, "skip", base + timedelta(minutes=5, seconds=1), position_ms=900)
+    out = recent(env)
+    assert [t["title"] for t in out] == ["Replayed"]
+    assert out[0]["played_at"].startswith(base.strftime("%Y-%m-%dT%H:%M"))  # the real listen, not the tap-through
+
+
+def test_the_song_playing_right_now_counts_and_carries_when_it_was_played(env):
+    song, *_ = seed(env, "Now playing")
+    record_event(env, env.user_id, song, "play_start", datetime.now(UTC))  # no end event yet
+    out = recent(env)
+    assert [t["title"] for t in out] == ["Now playing"] and out[0]["played_at"]
+
+
+def test_a_skip_without_a_position_still_counts_as_a_listen(env):
+    song, *_ = seed(env, "Unknown position")
+    base = datetime.now(UTC)
+    record_event(env, env.user_id, song, "play_start", base)
+    record_event(env, env.user_id, song, "skip", base + timedelta(seconds=1))
+    assert [t["title"] for t in recent(env)] == ["Unknown position"]
+
+
+def test_recently_played_hides_songs_that_are_not_ready(env):
+    ready, *_ = seed(env, "Ready one")
+    broken, *_ = seed(env, "Broken one", status="failed")
+    base = datetime.now(UTC)
+    record_play(env, env.user_id, ready, base)
+    record_play(env, env.user_id, broken, base + timedelta(seconds=1))
+    assert [t["title"] for t in recent(env)] == ["Ready one"]
+
+
 def test_made_for_you_prefers_liked_and_played_artists_and_excludes_already_played(env):
     liked_track, liked_artist, _ = seed(env, "Liked artist song", artist="Liked Co")
     other_track, _, _ = seed(env, "Other song", artist="Liked Co")  # same artist, not yet played
