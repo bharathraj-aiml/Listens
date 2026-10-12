@@ -23,7 +23,8 @@ class UserRef(BaseModel):
 class TrackOut(BaseModel):
     id: uuid.UUID
     title: str
-    artist: ArtistRef
+    artist: ArtistRef  # the primary (first credited) artist
+    artists: list[ArtistRef] = []  # everyone credited, in credit order (starts with `artist`)
     album: AlbumRef | None
     genre: str | None
     license: str | None

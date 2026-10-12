@@ -6,13 +6,13 @@ import uuid
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from redis import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from listens_common import artists, dedupe
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
-from listens_common.models import Album, Artist, Follow, Track
+from listens_common.models import Album, Artist, Follow, Track, TrackArtist
 from listens_common.storage import delete_prefix, get_s3
 from listens_common.web import current_user_id, get_redis
 
@@ -53,16 +53,6 @@ def health() -> dict:
 
 
 # ---------------------------------------------------------------- upload
-
-def _find_or_create_artist(db: Session, user_id: uuid.UUID, name: str) -> Artist:
-    # "A/B", "A, B" and "A;B" are one credit: match whatever separators the existing artist was stored with
-    artist = artists.find_artist(db, user_id, name)
-    if artist is None:
-        artist = Artist(name=artists.canonical_credit(name), owner_user_id=user_id)
-        db.add(artist)
-        db.flush()
-    return artist
-
 
 def _find_or_create_album(db: Session, artist: Artist, title: str) -> Album:
     album = db.scalar(select(Album).where(Album.artist_id == artist.id, func.lower(Album.title) == title.lower()))
@@ -138,7 +128,9 @@ def upload(
     if same_song:
         response.status_code = status.HTTP_200_OK
         return UploadOut(track=track_out(same_song[0], settings, user_id), duplicate=True)
-    artist_row = _find_or_create_artist(db, user_id, final_artist)
+    # one artist per person in the credit ("A/B", "A, B" and "A;B" all credit A and B); the first is the primary artist
+    people = artists.ensure_artists(db, user_id, final_artist)
+    artist_row = people[0]
     album_row = _find_or_create_album(db, artist_row, album_name.strip()[:200]) if album_name else None
 
     track_id = uuid.uuid4()
@@ -153,6 +145,8 @@ def upload(
         lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
     )
     db.add(track)
+    db.flush()
+    artists.set_track_artists(db, track, people)
     try:
         db.commit()
     except Exception:
@@ -279,7 +273,11 @@ def get_artist(
     artist = db.get(Artist, artist_id)
     if artist is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Artist not found")
-    tracks = db.scalars(_tracks_query().where(Track.artist_id == artist_id, Track.status == "ready")).unique()
+    credited = select(TrackArtist.track_id).where(TrackArtist.artist_id == artist_id)
+    # everything this artist is credited on, plus tracks not linked yet (the primary artist is always credited)
+    tracks = db.scalars(
+        _tracks_query().where(or_(Track.artist_id == artist_id, Track.id.in_(credited)), Track.status == "ready")
+    ).unique()
     followed = db.get(Follow, (user_id, "artist", artist_id)) is not None
     return ArtistDetail(
         id=artist.id, name=artist.name, bio=artist.bio, followed=followed,

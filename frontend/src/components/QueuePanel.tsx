@@ -1,6 +1,7 @@
 "use client";
 
 import Cover from "@/components/Cover";
+import { creditText } from "@/lib/credit";
 import { CloseIcon } from "@/components/icons";
 import QualitySelect from "@/components/QualitySelect";
 import SidePanel from "@/components/SidePanel";
@@ -30,7 +31,7 @@ export default function QueuePanel() {
               <Cover id={t.id} url={t.cover_url} size={40} />
               <span className="min-w-0">
                 <span className={`block truncate text-sm ${i === index ? "text-accent" : ""}`}>{t.title}</span>
-                <span className="block truncate text-xs text-muted">{t.artist.name}</span>
+                <span className="block truncate text-xs text-muted">{creditText(t)}</span>
               </span>
             </button>
             <span className="font-mono text-xs tabular-nums text-muted">{formatDuration(t.duration_ms)}</span>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { creditText } from "@/lib/credit";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Cover from "@/components/Cover";
 import { PauseIcon, PlayIcon } from "@/components/icons";
@@ -30,7 +31,7 @@ function Resume({ tracks }: { tracks: Track[] }) {
       <Cover id={last.id} url={last.cover_url} size={56} className="rounded-xl" />
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{last.title}</div>
-        <div className="truncate text-sm text-muted">{last.artist.name}</div>
+        <div className="truncate text-sm text-muted">{creditText(last)}</div>
       </div>
       <button
         aria-label={active && playing ? "Pause" : `Resume ${last.title}`}

@@ -29,6 +29,7 @@ def track_out(track: Track, settings: Settings, user_id: uuid.UUID | None = None
         id=track.id,
         title=track.title,
         artist=ArtistRef(id=track.artist.id, name=track.artist.name),
+        artists=[ArtistRef(id=a.id, name=a.name) for a in (track.artists or [track.artist])],
         album=AlbumRef(id=track.album.id, title=track.album.title) if track.album else None,
         genre=track.genre,
         license=track.license,

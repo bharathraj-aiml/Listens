@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 
 from listens_common import testing
 from listens_common.config import get_settings
@@ -120,3 +121,44 @@ def test_untagged_files_with_the_same_filename_stem_are_not_called_duplicates(en
     a = post(env, testing.make_audio(env.dir / "a" / "Track 01.mp3", seconds=2))
     b = post(env, testing.make_audio(env.dir / "b" / "Track 01.mp3", seconds=3))
     assert a.status_code == 201 and b.status_code == 201 and b.json()["duplicate"] is False
+
+
+def test_a_song_credits_every_artist_and_each_credited_artist_page_lists_it(env):
+    f = testing.make_audio(env.dir / "c.mp3", title="Duet", artist="Ilaiyaraaja/S. P. Balasubrahmanyam", album="Hits")
+    t = post(env, f).json()["track"]
+    assert [a["name"] for a in t["artists"]] == ["Ilaiyaraaja", "S. P. Balasubrahmanyam"]
+    assert t["artist"]["name"] == "Ilaiyaraaja"  # the first credited artist is the primary one
+
+    # a different separator and a different line-up share the same people, not new artist rows
+    f2 = testing.make_audio(env.dir / "d.mp3", seconds=2, title="Solo", artist="Ilaiyaraaja, Mano", album="Hits")
+    t2 = post(env, f2).json()["track"]
+    with env.sessions() as db:
+        assert sorted(a.name for a in db.query(Artist)) == ["Ilaiyaraaja", "Mano", "S. P. Balasubrahmanyam"]
+        assert db.query(Album).count() == 1  # both songs are on one album under the primary artist
+        spb = next(a for a in db.query(Artist) if a.name.startswith("S. P."))
+        mano = next(a for a in db.query(Artist) if a.name == "Mano")
+        for tid in (t["id"], t2["id"]):  # make the tracks listable
+            db.query(Track).filter_by(id=uuid.UUID(tid)).update({"status": "ready"})
+        db.commit()
+    page = env.client.get(f"/artists/{spb.id}", headers=env.headers).json()
+    assert [x["title"] for x in page["tracks"]] == ["Duet"]  # featured, not primary, still listed
+    assert [x["title"] for x in env.client.get(f"/artists/{mano.id}", headers=env.headers).json()["tracks"]] == ["Solo"]
+    assert t2["artists"][1]["name"] == "Mano"
+
+
+def test_search_finds_a_song_by_any_of_its_credited_artists(env):
+    f = testing.make_audio(env.dir / "s.mp3", title="Night Song", artist="Hariharan/Sadhana Sargam")
+    t = post(env, f).json()["track"]
+    with env.sessions() as db:
+        db.query(Track).filter_by(id=uuid.UUID(t["id"])).update({"status": "ready"})
+        db.commit()
+    found = env.client.get("/search", params={"q": "sadhana"}, headers=env.headers).json()
+    assert [x["id"] for x in found["tracks"]] == [t["id"]]
+    assert [a["name"] for a in found["artists"]] == ["Sadhana Sargam"]
+
+
+def test_the_same_song_credited_with_other_separators_is_a_duplicate(env):
+    first = post(env, testing.make_audio(env.dir / "a.mp3", title="Same", artist="A/B")).json()
+    again = post(env, testing.make_audio(env.dir / "b.mp3", seconds=2, title="Same", artist="B, A"))
+    assert again.status_code == 200 and again.json()["duplicate"] is True
+    assert again.json()["track"]["id"] == first["track"]["id"]

@@ -1,4 +1,5 @@
 import type { Track } from "./types";
+import { sharesArtist } from "./credit.ts"; // relative with extension: the node test runner has no "@/" alias
 
 /** Smart shuffle: random, but not blind. Each next song is drawn (weighted, so it never feels
  *  scripted) from what is left, where a song's weight is:
@@ -55,12 +56,12 @@ export function weightFor(candidate: Track, prev: Track | null, prev2: Track | n
   }
 
   if (prev) {
-    if (candidate.artist.id === prev.artist.id) w *= SAME_ARTIST_AS_PREV;
+    if (sharesArtist(candidate, prev)) w *= SAME_ARTIST_AS_PREV;
     if (sameAlbum(candidate, prev)) w *= SAME_ALBUM_AS_PREV;
     const d = flowDistance(prev, candidate);
     if (d !== null) w *= Math.exp(-FLOW_STRENGTH * d);
   }
-  if (prev2 && candidate.artist.id === prev2.artist.id) w *= SAME_ARTIST_AS_PREV2;
+  if (prev2 && sharesArtist(candidate, prev2)) w *= SAME_ARTIST_AS_PREV2;
   return w;
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { recordPlay } from "@/lib/recentPlays";
+import { creditText } from "@/lib/credit";
 import Hls, { type Level } from "hls.js";
 import { useEffect, useRef } from "react";
 import { recordEvent } from "@/lib/events";
@@ -382,11 +383,11 @@ export default function PlayerEngine() {
       document.title = "Shadow Listens";
       return;
     }
-    document.title = `${track.title} · ${track.artist.name}`;
+    document.title = `${track.title} · ${creditText(track)}`;
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
-      artist: track.artist.name,
+      artist: creditText(track),
       album: track.album?.title ?? "",
       artwork: track.cover_url ? [{ src: new URL(track.cover_url, location.href).href, sizes: "600x600", type: "image/jpeg" }] : [],
     });

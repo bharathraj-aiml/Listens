@@ -1,6 +1,7 @@
 "use client";
 
 import Cover, { hue } from "@/components/Cover";
+import { creditText } from "@/lib/credit";
 import Timeline from "@/components/Timeline";
 import { CaretDownIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon } from "@/components/icons";
 import LyricsView from "@/components/LyricsView";
@@ -110,7 +111,7 @@ function GlassLyrics() {
             <Cover id={track.id} url={track.cover_url} size={44} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-white">{track.title}</div>
-              <div className="truncate text-xs text-white/70">{track.artist.name}</div>
+              <div className="truncate text-xs text-white/70">{creditText(track)}</div>
             </div>
           </div>
           <Timeline testId="lyrics-seek" tone="light" value={p.currentTime} max={duration} onSeek={p.requestSeek} className="mt-2" />

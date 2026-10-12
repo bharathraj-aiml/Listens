@@ -12,6 +12,7 @@ import { formatTime } from "@/lib/format";
 import { useSlideIn } from "@/lib/useSlideIn";
 import { useSwipe } from "@/lib/swipe";
 import { currentTrack, usePlayer } from "@/store/player";
+import ArtistLinks from "@/components/ArtistLinks";
 
 /** Mobile-only full-screen "Now Playing" view, modeled on Spotify/Apple Music: the slim
  *  mini-player (PlayerBar) only has room for cover + title + play/pause + prev/next, so every
@@ -73,7 +74,7 @@ export default function NowPlayingSheet() {
                 )}
                 <div data-testid="now-playing-title" className="truncate text-lg font-semibold">{track.title}</div>
               </div>
-              <div className="truncate text-sm text-muted">{track.artist.name}</div>
+              <div className="truncate text-sm text-muted"><ArtistLinks track={track} closeFirst={() => p.setNowPlayingOpen(false)} /></div>
             </div>
             <LikeButton trackId={track.id} />
           </div>

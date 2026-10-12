@@ -1,6 +1,7 @@
 "use client";
 
 import Cover from "@/components/Cover";
+import { creditText } from "@/lib/credit";
 import { PlayIcon } from "@/components/icons";
 import type { Track } from "@/lib/types";
 import { currentTrack, usePlayer } from "@/store/player";
@@ -45,7 +46,7 @@ export default function TrackShelf({ id, title, tracks }: { id: string; title: s
                   )}
                 </span>
                 <span className={`mt-2 block truncate text-sm font-medium ${isCurrent ? "text-accent" : ""}`}>{t.title}</span>
-                <span className="block truncate text-xs text-muted">{t.artist.name}</span>
+                <span className="block truncate text-xs text-muted">{creditText(t)}</span>
               </button>
             </li>
           );

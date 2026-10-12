@@ -38,7 +38,7 @@ the next starts. It is live, running entirely on free tiers (see "Deployment (fr
 ├── .github/workflows/cron-tick.yml   # pokes the background services on a slow schedule (free-tier friendly)
 ├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper, dedupe, artist credits
 │   └── tests/                  # migration-vs-models, signing, dedupe, artists, music metadata
-├── migrations/                 # Alembic 0001-0005: schema, catalogue + full-text, lyrics, audio features + vectors, taste features
+├── migrations/                 # Alembic 0001-0006: schema, catalogue + full-text, lyrics, audio features + vectors, taste features, track_artists
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
 │   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events, analytics, recommendations
@@ -53,7 +53,8 @@ the next starts. It is live, running entirely on free tiers (see "Deployment (fr
     ├── run_local_worker.sh     # run the transcode worker on this PC against production (fast; Render's is the slow fallback)
     ├── enrich_library.py       # fetch artist relatedness / tags and audio fingerprints for the recommender
     ├── dedupe_library.py       # list / delete duplicate songs (same title + artist, compatible album)
-    ├── normalize_artists.py    # merge artists that differ only by "/" vs "," credit separators
+    ├── split_artist_credits.py # one artist per person: split "A, B, C" credit rows and credit each song to everyone on it
+    ├── normalize_artists.py    # merge artists that differ only by "/" vs "," credit separators (superseded by the split)
     ├── register_b2_orphans.py  # add songs that are in the B2 bucket but missing from the app
     └── setup_b2_cors.py        # one-off: apply CORS rules to the B2 audio/covers buckets
 ```
@@ -137,13 +138,18 @@ small batches (the scripts report how many bytes they will download), and let th
 
 ```bash
 set -a; source .env.prod; set +a                        # production values (gitignored)
-.venv/Scripts/python scripts/normalize_artists.py       # merge "A/B" and "A, B" artists   (--apply to commit)
+.venv/Scripts/python scripts/split_artist_credits.py   # one artist per person in a credit (--apply to commit)
 .venv/Scripts/python scripts/dedupe_library.py          # duplicate songs                  (--apply to delete)
 .venv/Scripts/python scripts/register_b2_orphans.py     # songs in B2 but not in the app   (--apply to add)
 ```
 
-Artist credits are normalised to `A, B` whatever separator the tags used (`A/B`, `A;B`); uploads match existing artists
-by that key, so the same credit never splits into two artists.
+**Artists.** A song can have several artists. Tags separate collaborators with `/`, `,` or `;`, so every credit is split into
+people (`listens_common/artists.py`): one artist row per person, a `track_artists` link per song and person (in credit
+order), and `tracks.artist_id` is the first credited person (the primary artist, which albums hang off). Everyone
+credited sees the song on their page and in search; the API returns `artist` (primary) and `artists` (all). Known Tamil
+artists' spelling variants are one person (`Yuvanshankar Raja` = `Yuvan Shankar Raja`, `SPB`; aliases live in
+`tamil_seed.py`). Duplicate detection compares the whole set of people, so `A/B` and `B, A` are the same credit.
+Uploads and the import scripts do this automatically; `split_artist_credits.py` converted the existing library.
 
 ## Interface
 
@@ -196,7 +202,8 @@ by that key, so the same credit never splits into two artists.
     shows the "Waking up the server" banner, and both disappear when the data arrives. Sign in shows a progress state.
 16. **Desktop layout:** collapse and expand the sidebar (it stays collapsed after a reload); open Lyrics and confirm the
     page content narrows beside it and the player bar's seek line is fully visible below the panel.
-17. **Artists:** a collaboration credited with `/` in one file and `,` in another is one artist with one page.
+17. **Artists:** a song credited `A/B` shows "A, B", appears on both A's and B's pages and in a search for either, and
+    tapping a name on the Now Playing sheet opens that person. `A/B` and `B, A` uploaded twice are one song.
 
 ## Tests
 
@@ -381,9 +388,9 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 190 Python tests
-  (common 31, auth 16, catalogue 84 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
-  11 site-Worker tests, 6 CDN-Worker tests and 18 frontend unit tests, all passing; the new interface states were also
+- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 196 Python tests
+  (common 34, auth 16, catalogue 87 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
+  11 site-Worker tests, 6 CDN-Worker tests and 21 frontend unit tests, all passing; the new interface states were also
   checked in a real browser with a mocked, deliberately slow API (skeletons, banner timing, sign-in state, seek-bar fill,
   reduced motion, sidebar collapse and persistence, panel layout).
 - **Phase 3:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes, follows,
@@ -444,5 +451,5 @@ Nothing is excluded, it is a bias. Unit tests: `cd frontend && npm run test:unit
 
 ## Next
 
-Measure the suggestions against your listening (skip rate on recommended songs vs. the old ALS and heuristic picks),
-and give a track several artists properly (a many-to-many link) so a collaboration shows up on every credited artist's page.
+Measure the suggestions against your listening (skip rate on recommended songs vs. the old ALS and heuristic picks), and
+use all credited artists (not just the primary) in the recommender's artist graph and the listening-stats "top artist".

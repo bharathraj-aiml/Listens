@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from .models import Album, Artist, Like, PlaylistTrack, Track
+from .models import Album, Artist, Like, PlaylistTrack, Track, TrackArtist
 
 DURATION_TOLERANCE_MS = 3000
 LIVE_STATUSES = ("uploaded", "processing", "ready")
@@ -39,7 +39,9 @@ def find_duplicates(
     a candidate must also have a known duration within DURATION_TOLERANCE_MS."""
     if uploader_id is None or norm(artist) in UNKNOWN_ARTISTS or not norm(title):
         return []
-    nt, na = norm(title), norm(artist)
+    from .artists import credit_key, credit_of  # lazy: artists imports norm from here
+
+    nt, na = norm(title), credit_key(artist)
     rows = db.execute(
         select(Track, Artist.name, Album.title)
         .join(Artist, Artist.id == Track.artist_id)
@@ -48,7 +50,8 @@ def find_duplicates(
     ).all()
     out = []
     for t, artist_name, album_title in rows:
-        if t.id == exclude_id or norm(t.title) != nt or norm(artist_name) != na:
+        # the same people, whatever the separators or order, so "A/B" and "B, A" are one credit
+        if t.id == exclude_id or norm(t.title) != nt or credit_key(credit_of(t) or artist_name) != na:
             continue
         if not _album_compatible(album, album_title):
             continue
@@ -74,6 +77,7 @@ def remove_track(db: Session, s3, settings, track: Track, keep: Track | None = N
                 db.add(Like(user_id=like.user_id, track_id=keep.id, created_at=like.created_at))
         db.execute(update(PlaylistTrack).where(PlaylistTrack.track_id == tid).values(track_id=keep.id))
     db.execute(delete(Like).where(Like.track_id == tid))
+    db.execute(delete(TrackArtist).where(TrackArtist.track_id == tid))
     db.delete(track)
     db.commit()
     delete_prefix(s3, settings.s3_bucket_audio, f"originals/{tid}/")
@@ -86,7 +90,9 @@ def duplicate_group(db: Session, track: Track) -> list[Track]:
     """`track` plus every other READY copy of the same song (empty list entries excluded)."""
     artist = db.get(Artist, track.artist_id)
     album = db.get(Album, track.album_id) if track.album_id else None
-    twins = find_duplicates(db, track.uploader_id, track.title, artist.name if artist else "",
+    from .artists import credit_of
+
+    twins = find_duplicates(db, track.uploader_id, track.title, credit_of(track) if artist else "",
                             album.title if album else None, duration_ms=track.duration_ms, exclude_id=track.id)
     twins = [t for t in twins if t.status == "ready"]
     return [track, *twins] if twins else []

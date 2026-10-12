@@ -133,7 +133,12 @@ class Track(Base):
     audio_vector: Mapped[list[float] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = _created_at()
 
+    # `artist` is the PRIMARY (first credited) artist; `artists` is everyone credited, in credit order, read through
+    # the track_artists link rows (write those via listens_common.artists.set_track_artists).
     artist: Mapped[Artist] = relationship(lazy="joined")
+    artists: Mapped[list[Artist]] = relationship(
+        secondary="track_artists", order_by="TrackArtist.position", lazy="selectin", viewonly=True
+    )
     album: Mapped["Album | None"] = relationship(lazy="joined")
 
     __table_args__ = (
@@ -143,6 +148,18 @@ class Track(Base):
         Index("ix_tracks_status_created", "status", "created_at"),
         Index("uq_tracks_uploader_sha", "uploader_id", "content_sha256", unique=True),
     )
+
+
+class TrackArtist(Base):
+    """Who is credited on a track. One row per person, `position` 0 = the primary (first-listed) artist."""
+
+    __tablename__ = "track_artists"
+
+    track_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("artists.id", ondelete="CASCADE"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    __table_args__ = (Index("ix_track_artists_artist_id", "artist_id"),)
 
 
 class Playlist(Base):

@@ -30,7 +30,7 @@ from sqlalchemy import func, or_, select  # noqa: E402
 from listens_common import artists, dedupe  # noqa: E402
 from listens_common.config import get_settings  # noqa: E402
 from listens_common.db import get_sessionmaker  # noqa: E402
-from listens_common.models import Album, Artist, Track, User  # noqa: E402
+from listens_common.models import Album, Track, User  # noqa: E402
 from listens_common.storage import get_s3  # noqa: E402
 
 
@@ -109,11 +109,8 @@ def main() -> None:
             added += 1
             if not args.apply:
                 continue
-            artist_row = artists.find_artist(db, user.id, artist_name)
-            if artist_row is None:
-                artist_row = Artist(name=artists.canonical_credit(artist_name), owner_user_id=user.id)
-                db.add(artist_row)
-                db.flush()
+            people = artists.ensure_artists(db, user.id, artist_name)  # one artist per person in the credit
+            artist_row = people[0]
             album_row = None
             if album_name:
                 album_row = db.scalar(select(Album).where(Album.artist_id == artist_row.id, func.lower(Album.title) == album_name.lower()))
@@ -121,11 +118,14 @@ def main() -> None:
                     album_row = Album(artist_id=artist_row.id, title=album_name)
                     db.add(album_row)
                     db.flush()
-            db.add(Track(
+            track = Track(
                 id=uuid.UUID(tid), artist_id=artist_row.id, album_id=album_row.id if album_row else None, uploader_id=user.id,
                 title=title, genre=tags.get("genre") or None, license=args.license, status="uploaded", source_key=key,
                 content_sha256=digest, lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
-            ))
+            )
+            db.add(track)
+            db.flush()
+            artists.set_track_artists(db, track, people)
             db.commit()
 
         print(f"\n{added} {'registered' if args.apply else 'to register'}, {skipped} skipped; downloaded {downloaded / 1e6:.1f} MB from B2")

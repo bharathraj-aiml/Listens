@@ -4,7 +4,8 @@ export interface AlbumRef { id: string; title: string }
 export interface Track {
   id: string;
   title: string;
-  artist: ArtistRef;
+  artist: ArtistRef; // the primary (first credited) artist
+  artists?: ArtistRef[]; // everyone credited, in credit order
   album: AlbumRef | null;
   genre: string | null;
   license: string | null;

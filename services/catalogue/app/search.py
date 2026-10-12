@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from listens_common.models import Album, Artist, Playlist, Track
+from listens_common.models import Album, Artist, Playlist, Track, TrackArtist
 
 
 def build_tsquery(q: str) -> str | None:
@@ -36,6 +36,10 @@ SELECT id FROM (
   UNION ALL
   SELECT t.id, 0.01 AS rank, t.created_at
     FROM tracks t JOIN artists a ON a.id = t.artist_id, to_tsquery('simple', :q) q
+   WHERE t.status = 'ready' AND {ARTIST_FTS} @@ q
+  UNION ALL
+  SELECT t.id, 0.01 AS rank, t.created_at
+    FROM tracks t JOIN track_artists ta ON ta.track_id = t.id JOIN artists a ON a.id = ta.artist_id, to_tsquery('simple', :q) q
    WHERE t.status = 'ready' AND {ARTIST_FTS} @@ q
 ) hits GROUP BY id ORDER BY max(rank) DESC, max(created_at) DESC LIMIT :n"""
 
@@ -81,10 +85,15 @@ def search(db: Session, q: str, user_id: uuid.UUID, limit: int = 10) -> dict[str
 
     pat = _like(q)
     esc = "\\"
+    credited_match = (
+        select(TrackArtist.track_id).join(Artist, Artist.id == TrackArtist.artist_id)
+        .where(func.lower(Artist.name).like(pat, escape=esc))
+    )
     tracks = db.scalars(
         select(Track).join(Artist, Track.artist_id == Artist.id)
         .where(Track.status == "ready")
         .where(or_(func.lower(Track.title).like(pat, escape=esc), func.lower(Artist.name).like(pat, escape=esc),
+                   Track.id.in_(credited_match),
                    func.lower(func.coalesce(Track.genre, "")).like(pat, escape=esc)))
         .order_by(Track.created_at.desc()).limit(limit)
     ).unique().all()

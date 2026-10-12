@@ -12,6 +12,7 @@ import { formatDuration } from "@/lib/format";
 import type { PlaylistDetail, PlaylistTrack } from "@/lib/types";
 import { useAuth } from "@/store/auth";
 import { usePlayer } from "@/store/player";
+import ArtistLinks from "@/components/ArtistLinks";
 
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>();
@@ -139,7 +140,7 @@ export default function PlaylistPage() {
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm">{pt.track.title}</div>
               <div className="truncate text-xs text-muted">
-                <Link href={`/artist/${pt.track.artist.id}`} className="hover:text-fg hover:underline">{pt.track.artist.name}</Link>
+                <ArtistLinks track={pt.track} />
               </div>
             </div>
             <LikeButton trackId={pt.track.id} size={18} />

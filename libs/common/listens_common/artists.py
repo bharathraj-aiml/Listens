@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from . import tamil_seed
 from .dedupe import norm
-from .models import Album, Artist, ArtistMeta, Follow, Track
+from .models import Album, Artist, ArtistMeta, Follow, Track, TrackArtist
 
 _SEPARATORS = re.compile(r"\s*[/,;]\s*")
 # Names that legitimately contain a separator and must stay whole.
@@ -69,6 +70,22 @@ class MergeReport:
     details: list[str] = field(default_factory=list)
 
 
+def merge_albums(db: Session, artist_id: uuid.UUID, report: "MergeReport") -> None:
+    """Albums of the same title under one artist are one album: keep the oldest, move its tracks over."""
+    by_title: dict[str, list[Album]] = defaultdict(list)
+    for al in db.scalars(select(Album).where(Album.artist_id == artist_id).order_by(Album.created_at, Album.id)):
+        by_title[norm(al.title)].append(al)
+    for same in by_title.values():
+        keep = same[0]
+        for dup in same[1:]:
+            db.execute(update(Track).where(Track.album_id == dup.id).values(album_id=keep.id))
+            keep.cover_key = keep.cover_key or dup.cover_key
+            keep.release_date = keep.release_date or dup.release_date
+            db.flush()
+            db.delete(dup)
+            report.albums_merged += 1
+
+
 def _album_count(db: Session, artist_id: uuid.UUID) -> int:
     return db.scalar(select(func.count()).select_from(Album).where(Album.artist_id == artist_id)) or 0
 
@@ -111,19 +128,7 @@ def merge_artists(db: Session) -> MergeReport:
             survivor.name = canonical
             report.renamed += 1
 
-        # albums of the same title now sit under one artist: keep the oldest, move its tracks over
-        by_title: dict[str, list[Album]] = defaultdict(list)
-        for al in db.scalars(select(Album).where(Album.artist_id == survivor.id).order_by(Album.created_at, Album.id)):
-            by_title[norm(al.title)].append(al)
-        for same in by_title.values():
-            keep = same[0]
-            for dup in same[1:]:
-                db.execute(update(Track).where(Track.album_id == dup.id).values(album_id=keep.id))
-                keep.cover_key = keep.cover_key or dup.cover_key
-                keep.release_date = keep.release_date or dup.release_date
-                db.flush()
-                db.delete(dup)
-                report.albums_merged += 1
+        merge_albums(db, survivor.id, report)
 
         if (
             not track_counts.get(survivor.id) and not any(a.id != survivor.id and track_counts.get(a.id) for a in rows)
@@ -135,4 +140,135 @@ def merge_artists(db: Session) -> MergeReport:
             db.delete(survivor)
             report.empty_removed += 1
     db.flush()
+    return report
+
+
+# ------------------------------------------------------------------ one artist per person
+
+# Misspellings seen in this library's tags that the seed list does not know (keys are tamil_seed._key forms).
+_SPELLING = {
+    tamil_seed._key(wrong): right
+    for wrong, right in {
+        "Harish Ragavendra": "Harish Raghavendra",
+        "S.P.Balasubramniam": "S. P. Balasubrahmanyam",
+        "Sadhna Sargam": "Sadhana Sargam",
+    }.items()
+}
+
+
+def person_name(name: str) -> str:
+    """The spelling to store for one person: the Tamil seed list's canonical name when this is a known spelling or
+    alias ("SPB", "Yuvanshankar Raja"), else the name as written with spacing tidied."""
+    clean = " ".join(name.split())
+    key = tamil_seed._key(clean)
+    if key in _SPELLING:
+        return _SPELLING[key]
+    seed = tamil_seed._BY_KEY.get(key)
+    return seed.name if seed else clean
+
+
+PersonIndex = dict[tuple[uuid.UUID, str], Artist]
+
+
+def person_index(db: Session) -> PersonIndex:
+    """Every artist by (owner, credit key), so bulk jobs look people up in memory instead of once per name."""
+    oldest_last = db.scalars(select(Artist).order_by(Artist.created_at.desc(), Artist.id.desc())).all()
+    return {(a.owner_user_id, credit_key(a.name)): a for a in oldest_last}  # the oldest row wins a key clash
+
+
+def _person(db: Session, owner_id: uuid.UUID, name: str, index: PersonIndex | None = None) -> Artist:
+    name = person_name(name)
+    key = (owner_id, credit_key(name))
+    artist = index.get(key) if index is not None else find_artist(db, owner_id, name)
+    if artist is None:
+        artist = Artist(name=name[:200], owner_user_id=owner_id)
+        db.add(artist)
+        db.flush()
+        if index is not None:
+            index[key] = artist
+    return artist
+
+
+def ensure_artists(db: Session, owner_id: uuid.UUID, raw: str | None, index: PersonIndex | None = None) -> list[Artist]:
+    """The artist row for every person in a credit, in credit order, creating the ones that do not exist yet.
+    "A/B", "A, B" and "A;B" all give [A, B]; an empty credit gives the single "Unknown Artist"."""
+    names = credit_names(raw) or ["Unknown Artist"]
+    return [_person(db, owner_id, n, index) for n in names]
+
+
+def set_track_artists(db: Session, track: Track, people: list[Artist]) -> None:
+    """Credit exactly `people`, in order, on the track; the first becomes its primary artist."""
+    seen: list[Artist] = []
+    for a in people:
+        if all(a.id != x.id for x in seen):
+            seen.append(a)
+    db.flush()
+    db.execute(delete(TrackArtist).where(TrackArtist.track_id == track.id))
+    for pos, a in enumerate(seen):
+        db.add(TrackArtist(track_id=track.id, artist_id=a.id, position=pos))
+    track.artist_id = seen[0].id
+    db.flush()
+    db.expire(track, ["artist", "artists"])
+
+
+def credit_of(track: Track) -> str:
+    """The credit as text ("A, B"), from the credited artists (the primary one when none are linked yet)."""
+    return ", ".join(a.name for a in (track.artists or [track.artist]))
+
+
+@dataclass
+class SplitReport:
+    credits_split: int = 0
+    people_created: int = 0
+    tracks_linked: int = 0
+    albums_moved: int = 0
+    albums_merged: int = 0
+    removed: int = 0
+    details: list[str] = field(default_factory=list)
+
+
+def split_credits(db: Session) -> SplitReport:
+    """Turn every multi-person credit row ("A, B, C") into one artist per person, and link each track to everyone
+    credited on it. Tracks keep working throughout: Track.artist_id becomes the first person. Albums and followers
+    of a credit row move to its first person; albums that then share a title merge; credit rows nothing refers to
+    are removed. Idempotent. Does not commit (dry run = rollback)."""
+    report = SplitReport()
+    before = {a.id for a in db.scalars(select(Artist))}
+    combined = [a for a in db.scalars(select(Artist).order_by(Artist.created_at, Artist.id)) if len(credit_names(a.name)) > 1]
+    index = person_index(db)
+
+    for credit in combined:
+        people = ensure_artists(db, credit.owner_user_id, credit.name, index) if credit.owner_user_id else [credit]
+        lead = people[0]
+        for track in db.scalars(select(Track).where(Track.artist_id == credit.id)).unique().all():
+            set_track_artists(db, track, people)
+        moved = db.execute(update(Album).where(Album.artist_id == credit.id).values(artist_id=lead.id)).rowcount or 0
+        report.albums_moved += moved
+        for f in db.scalars(select(Follow).where(Follow.target_type == "artist", Follow.target_id == credit.id)).all():
+            if db.get(Follow, (f.follower_id, "artist", lead.id)) is None:
+                db.add(Follow(follower_id=f.follower_id, target_type="artist", target_id=lead.id, created_at=f.created_at))
+            db.delete(f)
+        db.execute(delete(ArtistMeta).where(ArtistMeta.artist_id == credit.id))
+        lead.bio = lead.bio or credit.bio
+        lead.image_key = lead.image_key or credit.image_key
+        db.flush()
+        report.details.append(f"split  {credit.name!r} -> {[p.name for p in people]}")
+        db.delete(credit)
+        report.credits_split += 1
+        db.flush()
+
+    # every remaining track gets its link rows (single-artist tracks included), so queries can rely on the table
+    linked = set(db.scalars(select(TrackArtist.track_id)))
+    for track in db.scalars(select(Track)).unique().all():
+        if track.id not in linked:
+            set_track_artists(db, track, [track.artist])
+            report.tracks_linked += 1
+
+    sub = MergeReport()
+    for artist_id in {a for (a,) in db.execute(select(Album.artist_id).distinct())}:
+        merge_albums(db, artist_id, sub)
+    report.albums_merged = sub.albums_merged
+    db.flush()
+    report.people_created = len({a.id for a in db.scalars(select(Artist))} - before)
+    report.removed = report.credits_split
     return report

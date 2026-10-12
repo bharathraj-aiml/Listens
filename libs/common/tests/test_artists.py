@@ -1,5 +1,5 @@
 from listens_common import artists, testing
-from listens_common.models import Album, Artist, ArtistMeta, Follow, Track, User
+from listens_common.models import Album, Artist, ArtistMeta, Follow, Track, TrackArtist, User
 from datetime import UTC, datetime
 
 
@@ -104,3 +104,59 @@ def test_find_artist_matches_across_separators_for_the_same_owner():
     a = _artist(db, u, "Hariharan/Sadhana Sargam", tracks=1)
     assert artists.find_artist(db, u.id, "Sadhana Sargam, Hariharan").id == a.id
     assert artists.find_artist(db, u.id, "Someone Else") is None
+
+
+def test_ensure_artists_makes_one_artist_per_person_and_reuses_them():
+    db, u = _world()
+    first = artists.ensure_artists(db, u.id, "Yuvan Shankar Raja/Na.Muthukumar")
+    again = artists.ensure_artists(db, u.id, "Na.Muthukumar, Yuvanshankar Raja, Hariharan")
+    assert [a.name for a in first] == ["Yuvan Shankar Raja", "Na.Muthukumar"]
+    assert [a.name for a in again] == ["Na.Muthukumar", "Yuvan Shankar Raja", "Hariharan"]  # spelling variants are the same person
+    assert again[0].id == first[1].id and again[1].id == first[0].id
+    assert db.query(Artist).count() == 3
+    assert [a.name for a in artists.ensure_artists(db, u.id, "")] == ["Unknown Artist"]
+
+
+def test_set_track_artists_orders_credits_and_sets_the_primary():
+    db, u = _world()
+    a, b, c = (artists.ensure_artists(db, u.id, n)[0] for n in ("A", "B", "C"))
+    t = _artist(db, u, "Placeholder", tracks=1)
+    track = db.query(Track).first()
+    artists.set_track_artists(db, track, [b, a, b, c])  # repeats are ignored
+    assert [x.name for x in track.artists] == ["B", "A", "C"]
+    assert track.artist_id == b.id
+    assert artists.credit_of(track) == "B, A, C"
+    artists.set_track_artists(db, track, [c])
+    assert [x.name for x in track.artists] == ["C"] and track.artist_id == c.id
+
+
+def test_split_credits_turns_credit_rows_into_people_and_keeps_every_track_reachable():
+    db, u = _world()
+    x = _artist(db, u, "Harris Jayaraj, Karthik", tracks=2, albums=("Film",), day=1)
+    y = _artist(db, u, "Harris Jayaraj/Chinmayi", tracks=1, albums=("film",), day=2)
+    solo = _artist(db, u, "Mano", tracks=1)
+    db.add(Follow(follower_id=u.id, target_type="artist", target_id=x.id))
+    db.flush()
+
+    report = artists.split_credits(db)
+    db.flush()
+
+    assert sorted(a.name for a in db.query(Artist)) == ["Chinmayi", "Harris Jayaraj", "Karthik", "Mano"]
+    harris = db.query(Artist).filter_by(name="Harris Jayaraj").one()
+    assert db.query(Album).count() == 1 and db.query(Album).one().artist_id == harris.id  # both "Film" albums merged
+    assert len({t.album_id for t in db.query(Track).filter(Track.artist_id == harris.id)}) == 1
+    credited = {a.name: sorted(t.title for t in db.query(Track).join(TrackArtist, TrackArtist.track_id == Track.id).filter(TrackArtist.artist_id == a.id)) for a in db.query(Artist)}
+    assert len(credited["Harris Jayaraj"]) == 3 and len(credited["Karthik"]) == 2 and len(credited["Chinmayi"]) == 1
+    assert credited["Mano"] == [f"Mano{i}" for i in range(1)]
+    assert all(t.artists for t in db.query(Track))  # every track has link rows, single-artist ones too
+    assert db.query(Follow).filter_by(target_id=harris.id).count() == 1  # the follow moved to the first person
+    assert (report.credits_split, report.albums_merged) == (2, 1)
+
+    again = artists.split_credits(db)
+    assert (again.credits_split, again.tracks_linked, again.albums_merged, again.people_created) == (0, 0, 0, 0)
+    assert solo.id  # untouched row
+
+
+def test_known_misspellings_are_the_same_person():
+    for wrong, right in [("Harish Ragavendra", "Harish Raghavendra"), ("S.P.Balasubramniam", "S. P. Balasubrahmanyam"), ("Sadhna Sargam", "Sadhana Sargam")]:
+        assert artists.person_name(wrong) == right == artists.person_name(right)

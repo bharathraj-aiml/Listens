@@ -1,6 +1,7 @@
 "use client";
 
 import Cover from "@/components/Cover";
+import { creditText } from "@/lib/credit";
 import Timeline from "@/components/Timeline";
 import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, SimilarIcon, VolumeIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
@@ -55,7 +56,7 @@ export default function PlayerBar() {
             {/* Plain text, not a link: tapping anywhere on the bar - title or artist - opens Now
                 Playing, matching every mobile music app. A nested Link here would navigate away
                 instead, which is exactly the bug this replaced. */}
-            <div className="truncate text-xs text-muted">{track.artist.name}</div>
+            <div className="truncate text-xs text-muted">{creditText(track)}</div>
             {p.error && <div role="alert" data-testid="player-error" className="truncate text-xs text-danger">{p.error}</div>}
           </div>
           <div onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>

@@ -1,6 +1,7 @@
 "use client";
 
 import AddToPlaylistMenu from "@/components/AddToPlaylistMenu";
+import { creditText } from "@/lib/credit";
 import Cover from "@/components/Cover";
 import { PlayIcon, PlusIcon, TrashIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
@@ -71,7 +72,7 @@ export default function TrackList({ tracks, showStatus = false, onDelete }: Prop
                 <span className="truncate">{t.title}</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted">
-                <span className="truncate">{t.artist.name}</span>
+                <span className="truncate">{creditText(t)}</span>
                 {showStatus && (
                   <span data-testid="track-status" className={`shrink-0 rounded-full px-2 py-0.5 ${STATUS_STYLE[t.status]}`}>{STATUS_LABEL[t.status]}</span>
                 )}
