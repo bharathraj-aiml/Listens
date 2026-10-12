@@ -29,7 +29,7 @@ export default function PlayerBar() {
   return (
     <div
       data-testid="player-bar"
-      className="glass-surface fixed inset-x-3 bottom-[4.75rem] z-30 overflow-hidden rounded-2xl md:bottom-3 md:left-[16.5rem] md:right-3"
+      className="glass-surface fixed inset-x-3 bottom-[4.75rem] z-30 overflow-hidden rounded-2xl md:bottom-3 md:left-[calc(var(--side)+1.5rem)] md:right-3 md:transition-[left] md:duration-300"
     >
       {/* thin progress line on mobile (the full slider is desktop-only) */}
       <div className="h-0.5 bg-white/15 md:hidden">

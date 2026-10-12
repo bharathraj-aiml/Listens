@@ -2,7 +2,7 @@ import {
   ArrowLeft, Bell, CaretDown, CaretRight, CaretUp, ChartBar, ChartLineUp, ClockCounterClockwise, CloudArrowDown, DeviceMobile, Disc,
   Gear, Heart, House, IdentificationCard, Info, Lock, MagnifyingGlass, Pause, PencilSimple, Play, Playlist, Plus,
   Queue, Repeat, RepeatOnce, Shuffle, SkipBack, SkipForward, SlidersHorizontal, Sparkle, SpeakerHigh, SpeakerX,
-  TextAlignLeft, Trash, UploadSimple, UserCircle, Waveform, X,
+  SidebarSimple, TextAlignLeft, Trash, UploadSimple, UserCircle, Waveform, X,
   type Icon, type IconProps,
 } from "@phosphor-icons/react";
 
@@ -22,6 +22,7 @@ export const QueueIcon = wrap(Queue);
 export const VolumeIcon = wrap(SpeakerHigh);
 export const MuteIcon = wrap(SpeakerX);
 export const HomeIcon = wrap(House);
+export const SidebarIcon = wrap(SidebarSimple);
 export const SearchIcon = wrap(MagnifyingGlass);
 export const UploadIcon = wrap(UploadSimple);
 export const CloseIcon = wrap(X);

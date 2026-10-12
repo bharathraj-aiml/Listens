@@ -17,6 +17,7 @@ import SimilarTracksPanel from "@/components/SimilarTracksPanel";
 import { get } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { useAuth } from "@/store/auth";
+import { useLayout } from "@/store/layout";
 import { useLikes } from "@/store/likes";
 
 /**
@@ -28,8 +29,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { ready, accessToken, user, load, setUser } = useAuth();
   const loadLikes = useLikes((s) => s.load);
+  const collapsed = useLayout((s) => s.sidebarCollapsed);
+  const loadLayout = useLayout((s) => s.load);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadLayout(); }, [loadLayout]);
   useEffect(() => {
     if (ready && !accessToken) router.replace("/login");
   }, [ready, accessToken, router]);
@@ -43,7 +47,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!ready || !accessToken) return <CenteredLoader label="Starting Shadow Listens" />;
 
   return (
-    <div className="min-h-dvh md:pl-60">
+    // --side is the desktop sidebar's footprint; the main column and the player bar both offset by it
+    <div
+      className="min-h-dvh transition-[padding] duration-300 ease-out motion-reduce:transition-none md:pl-[var(--side)]"
+      style={{ "--side": collapsed ? "5.25rem" : "15rem" } as React.CSSProperties}
+    >
       <AmbientBackdrop />
       <NavHistory />
       <RecentsTracker />

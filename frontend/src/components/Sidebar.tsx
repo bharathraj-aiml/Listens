@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AlbumIcon, HomeIcon, PlaylistIcon, ProfileIcon, SearchIcon, UploadIcon } from "@/components/icons";
-import { Logo } from "@/components/Logo";
+import { AlbumIcon, HomeIcon, PlaylistIcon, ProfileIcon, SearchIcon, SidebarIcon, UploadIcon } from "@/components/icons";
+import { Logo, LogoMark } from "@/components/Logo";
 import { useAuth } from "@/store/auth";
+import { useLayout } from "@/store/layout";
 
 const NAV = [
   { href: "/", label: "Home", Icon: HomeIcon },
@@ -19,23 +20,48 @@ const NAV = [
 export default function Sidebar() {
   const path = usePathname();
   const { user } = useAuth();
+  const collapsed = useLayout((s) => s.sidebarCollapsed);
+  const toggle = useLayout((s) => s.toggleSidebar);
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   const activeIndex = NAV.findIndex(({ href }) => active(href));
 
   return (
     <>
-      <nav aria-label="Main" className="glass-surface fixed bottom-3 left-3 top-3 z-20 hidden w-56 flex-col rounded-2xl p-4 md:flex">
-        <Link href="/" className="mb-8 mt-2"><Logo /></Link>
+      <nav
+        aria-label="Main"
+        data-collapsed={collapsed}
+        className={`glass-surface fixed bottom-3 left-3 top-3 z-20 hidden flex-col overflow-hidden rounded-2xl p-3 transition-[width] duration-300 ease-out motion-reduce:transition-none md:flex ${collapsed ? "w-[4.25rem]" : "w-56"}`}
+      >
+        <div className={`mb-6 mt-1 flex items-center ${collapsed ? "flex-col gap-4" : "justify-between px-1"}`}>
+          <Link href="/" aria-label="Shadow Listens home">{collapsed ? <LogoMark /> : <Logo />}</Link>
+          <button
+            data-testid="sidebar-toggle"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={toggle}
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/10 hover:text-fg"
+          >
+            <SidebarIcon />
+          </button>
+        </div>
         <ul className="space-y-1">
           {NAV.map(({ href, label, Icon }) => (
             <li key={href}>
-              <Link href={href} className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${active(href) ? "bg-white/15 text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]" : "text-muted hover:bg-white/10 hover:text-fg"}`}>
-                <Icon /> {label}
+              <Link
+                href={href}
+                title={collapsed ? label : undefined}
+                aria-label={collapsed ? label : undefined}
+                className={`flex items-center gap-3 rounded-lg py-2 text-sm transition-colors ${collapsed ? "justify-center px-0" : "px-3"} ${active(href) ? "bg-white/15 text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]" : "text-muted hover:bg-white/10 hover:text-fg"}`}
+              >
+                <Icon /> {!collapsed && <span className="truncate">{label}</span>}
               </Link>
             </li>
           ))}
         </ul>
-        <div className="mt-auto truncate border-t border-line pt-4 text-sm text-muted" data-testid="whoami">{user ? `@${user.username}` : ""}</div>
+        <div className={`mt-auto truncate border-t border-line pt-4 text-sm text-muted ${collapsed ? "text-center" : ""}`} data-testid="whoami" title={user ? `@${user.username}` : undefined}>
+          {user ? (collapsed ? user.username.slice(0, 1).toUpperCase() : `@${user.username}`) : ""}
+        </div>
       </nav>
 
       {/* mobile: bottom tab bar. A glass pill slides to the active tab (spring-like overshoot), the active icon
