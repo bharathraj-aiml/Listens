@@ -1,6 +1,7 @@
 "use client";
 
 import Cover, { hue } from "@/components/Cover";
+import Timeline from "@/components/Timeline";
 import {
   CaretDownIcon, LyricsIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, RepeatOnceIcon,
   ShuffleIcon, SimilarIcon,
@@ -78,16 +79,7 @@ export default function NowPlayingSheet() {
           </div>
 
           <div className="w-full max-w-xs">
-            <input
-              aria-label="Seek"
-              type="range"
-              min={0}
-              max={Math.max(duration, 1)}
-              step={0.5}
-              value={Math.min(p.currentTime, duration || 0)}
-              onChange={(e) => p.requestSeek(Number(e.target.value))}
-              className="h-1 w-full cursor-pointer"
-            />
+            <Timeline value={p.currentTime} max={duration} onSeek={p.requestSeek} />
             <div className="flex justify-between font-mono text-xs tabular-nums text-muted">
               <span>{formatTime(p.currentTime)}</span>
               <span>{formatTime(duration)}</span>

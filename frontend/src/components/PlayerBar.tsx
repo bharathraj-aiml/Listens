@@ -1,6 +1,7 @@
 "use client";
 
 import Cover from "@/components/Cover";
+import Timeline from "@/components/Timeline";
 import { LyricsIcon, MuteIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, SimilarIcon, VolumeIcon } from "@/components/icons";
 import LikeButton from "@/components/LikeButton";
 import QualitySelect from "@/components/QualitySelect";
@@ -94,17 +95,7 @@ export default function PlayerBar() {
             className="hidden w-full items-center gap-2 font-mono text-xs tabular-nums text-muted md:flex"
           >
             <span data-testid="time-current" className="w-10 text-right">{formatTime(p.currentTime)}</span>
-            <input
-              data-testid="seek"
-              aria-label="Seek"
-              type="range"
-              min={0}
-              max={Math.max(duration, 1)}
-              step={0.5}
-              value={Math.min(p.currentTime, duration || 0)}
-              onChange={(e) => p.requestSeek(Number(e.target.value))}
-              className="h-1 flex-1 cursor-pointer"
-            />
+            <Timeline testId="seek" value={p.currentTime} max={duration} onSeek={p.requestSeek} className="flex-1" />
             <span data-testid="time-total" className="w-10">{formatTime(duration)}</span>
           </div>
         </div>

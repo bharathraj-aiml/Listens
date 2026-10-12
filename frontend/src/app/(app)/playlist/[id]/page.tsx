@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { PageSkeleton } from "@/components/Loaders";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, get, post } from "@/lib/api";
@@ -63,7 +64,7 @@ export default function PlaylistPage() {
   }
 
   if (error) return <p role="alert" className="text-danger">{error}</p>;
-  if (!pl) return <p className="text-muted">Loading…</p>;
+  if (!pl) return <PageSkeleton />;
 
   const ready = pl.tracks.filter((pt) => pt.track.status === "ready").map((pt) => pt.track);
 

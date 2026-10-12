@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { SoundBars } from "@/components/Loaders";
 import { PlaylistIcon } from "@/components/icons";
 import { get, post } from "@/lib/api";
 import type { Playlist } from "@/lib/types";
@@ -51,7 +52,7 @@ export default function AddToPlaylistMenu({ trackId, trackTitle }: { trackId: st
       </button>
       {open && (
         <div data-testid="add-to-playlist-menu" className="glass-surface absolute right-0 top-full z-50 mt-1 w-56 rounded-2xl p-1">
-          {playlists === null && <div className="px-3 py-2 text-xs text-muted">Loading…</div>}
+          {playlists === null && <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted"><SoundBars size={12} /> Loading playlists</div>}
           {playlists?.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted">No playlists yet. Create one from the Playlists page.</div>
           )}

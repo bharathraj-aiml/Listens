@@ -1,6 +1,7 @@
 "use client";
 
 import Cover, { hue } from "@/components/Cover";
+import Timeline from "@/components/Timeline";
 import { CaretDownIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon } from "@/components/icons";
 import LyricsView from "@/components/LyricsView";
 import SidePanel from "@/components/SidePanel";
@@ -54,7 +55,6 @@ function GlassLyrics() {
 
   if (!mounted || !track) return null;
   const duration = p.duration || (track.duration_ms ?? 0) / 1000;
-  const progress = duration > 0 ? Math.min(100, (p.currentTime / duration) * 100) : 0;
 
   return (
     <div
@@ -113,18 +113,7 @@ function GlassLyrics() {
               <div className="truncate text-xs text-white/70">{track.artist.name}</div>
             </div>
           </div>
-          <input
-            aria-label="Seek"
-            data-testid="lyrics-seek"
-            type="range"
-            min={0}
-            max={Math.max(duration, 1)}
-            step={0.5}
-            value={Math.min(p.currentTime, duration || 0)}
-            onChange={(e) => p.requestSeek(Number(e.target.value))}
-            style={{ backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.9) ${progress}%, rgba(255,255,255,0.2) ${progress}%)` }}
-            className="mt-2 block h-8 w-full cursor-pointer appearance-none bg-center bg-no-repeat accent-white [background-size:100%_4px] [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white"
-          />
+          <Timeline testId="lyrics-seek" tone="light" value={p.currentTime} max={duration} onSeek={p.requestSeek} className="mt-2" />
           <div className="mt-2 flex justify-between font-mono text-[11px] tabular-nums text-white/70">
             <span>{formatTime(p.currentTime)}</span>
             <span>{formatTime(duration)}</span>

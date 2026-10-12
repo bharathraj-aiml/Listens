@@ -6,7 +6,7 @@ import Cover from "@/components/Cover";
 import { PauseIcon, PlayIcon } from "@/components/icons";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
 import TrackShelf, { ShelfSkeleton } from "@/components/TrackShelf";
-import { get } from "@/lib/api";
+import { get, getQuiet } from "@/lib/api";
 import { mergeRecents } from "@/lib/recents";
 import type { Track } from "@/lib/types";
 import { useAuth } from "@/store/auth";
@@ -55,7 +55,7 @@ export default function Home() {
   const [showAll, setShowAll] = useState(false);
 
   const refreshRecent = useCallback(() => {
-    get<Track[]>("/api/catalogue/home/recently-played").then(setServerRecent).catch(() => {});
+    getQuiet<Track[]>("/api/catalogue/home/recently-played").then(setServerRecent).catch(() => {});
   }, []);
 
   useEffect(() => {

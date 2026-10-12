@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TrackRowsSkeleton } from "@/components/Loaders";
 import Cover from "@/components/Cover";
 import { SettingsPage } from "@/components/SettingsPage";
 import { get } from "@/lib/api";
 import type { ListeningStats } from "@/lib/types";
 
 function StatsCard({ stats }: { stats: ListeningStats | null }) {
-  if (!stats) return <p className="text-sm text-muted">Loading…</p>;
+  if (!stats) return <TrackRowsSkeleton rows={2} />;
   if (!stats.top_artist && !stats.top_track) {
     return <p className="text-sm text-muted">Nothing played in this range yet.</p>;
   }

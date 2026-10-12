@@ -1,4 +1,4 @@
-import { post } from "@/lib/api";
+import { api } from "@/lib/api";
 
 export type ClientEventType = "play_start" | "play_end" | "skip";
 
@@ -16,5 +16,5 @@ interface EventBody {
  *  occasional trailing event) - covers play_start on load and play_end/skip on track change,
  *  which is the overwhelming majority of real listening sessions. */
 export function recordEvent(body: EventBody): void {
-  post("/api/catalogue/events", body).catch(() => {});
+  api("/api/catalogue/events", { method: "POST", body: JSON.stringify(body) }, true, { quiet: true }).catch(() => {});
 }

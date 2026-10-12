@@ -1,5 +1,6 @@
 import { cachedForBackNavigation, clearResponseCache, rememberResponse } from "@/lib/responseCache";
 import { useAuth } from "@/store/auth";
+import { trackRequest } from "@/store/net";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -24,11 +25,17 @@ function refreshTokens(): Promise<string | null> {
     refreshing = (async () => {
       const { refreshToken, setTokens, clear } = useAuth.getState();
       if (!refreshToken) return null;
-      const res = await fetch("/api/auth/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
+      const done = trackRequest(); // a sleeping auth server stalls here first, so it counts toward the waking banner
+      let res: Response;
+      try {
+        res = await fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+      } finally {
+        done();
+      }
       if (!res.ok) {
         clear();
         return null;
@@ -61,16 +68,24 @@ async function errorFrom(res: Response): Promise<ApiError> {
   return new ApiError(res.status, msg);
 }
 
-export async function api<T = unknown>(path: string, init: RequestInit = {}, auth = true): Promise<T> {
+/** `quiet` requests (play events, background refreshes) never raise the "waking up the server" banner. */
+export interface ApiOptions { quiet?: boolean }
+
+export async function api<T = unknown>(path: string, init: RequestInit = {}, auth = true, opts: ApiOptions = {}): Promise<T> {
   const isGet = (init.method ?? "GET").toUpperCase() === "GET";
   if (isGet && auth) {
     const hit = cachedForBackNavigation<T>(path);
     if (hit !== undefined) return hit;
   }
   if (!isGet) clearResponseCache();
-  const data = await request<T>(path, init, auth);
-  if (isGet && auth && data !== undefined) rememberResponse(path, data);
-  return data;
+  const done = opts.quiet ? null : trackRequest();
+  try {
+    const data = await request<T>(path, init, auth);
+    if (isGet && auth && data !== undefined) rememberResponse(path, data);
+    return data;
+  } finally {
+    done?.();
+  }
 }
 
 async function request<T>(path: string, init: RequestInit, auth: boolean): Promise<T> {
@@ -90,6 +105,7 @@ async function request<T>(path: string, init: RequestInit, auth: boolean): Promi
 }
 
 export const get = <T,>(path: string) => api<T>(path);
+export const getQuiet = <T,>(path: string) => api<T>(path, {}, true, { quiet: true });
 export const post = <T,>(path: string, body?: unknown, auth = true) =>
   api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, auth);
 export const patch = <T,>(path: string, body?: unknown) =>

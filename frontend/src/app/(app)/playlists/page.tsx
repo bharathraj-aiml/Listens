@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { TrackRowsSkeleton } from "@/components/Loaders";
 import { useEffect, useState } from "react";
 import Cover from "@/components/Cover";
 import { PlusIcon } from "@/components/icons";
@@ -64,7 +65,7 @@ export default function PlaylistsPage() {
       )}
 
       {error && <p role="alert" className="text-danger">{error}</p>}
-      {playlists === null && !error && <p className="text-muted">Loading…</p>}
+      {playlists === null && !error && <TrackRowsSkeleton rows={4} />}
       {playlists && playlists.length === 0 && (
         <div className="rounded-xl border border-dashed border-line p-8 text-center text-muted">No playlists yet. Create one to get started.</div>
       )}

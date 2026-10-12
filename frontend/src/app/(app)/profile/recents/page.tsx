@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TrackRowsSkeleton } from "@/components/Loaders";
 import Cover from "@/components/Cover";
 import { SettingsPage } from "@/components/SettingsPage";
 import { get } from "@/lib/api";
@@ -27,7 +28,7 @@ export default function RecentsPage() {
 
   return (
     <SettingsPage title="Recents">
-      {days === null && <p className="text-sm text-muted">Loading…</p>}
+      {days === null && <TrackRowsSkeleton rows={5} />}
       {days && days.length === 0 && <p className="text-sm text-muted">Nothing played in the last 14 days.</p>}
       {days && days.length > 0 && (
         <ul className="divide-y divide-line/60 rounded-xl border border-line">

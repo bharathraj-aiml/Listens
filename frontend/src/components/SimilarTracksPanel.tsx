@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TrackRowsSkeleton } from "@/components/Loaders";
 import SidePanel from "@/components/SidePanel";
 import TrackList from "@/components/TrackList";
 import { get } from "@/lib/api";
@@ -38,7 +39,7 @@ export default function SimilarTracksPanel() {
     >
       {!track && <p className="px-4 py-8 text-sm text-muted">Nothing playing.</p>}
       {track && error && <p role="alert" className="px-4 py-8 text-sm text-danger">{error}</p>}
-      {track && !error && !tracks && <p className="px-4 py-8 text-sm text-muted">Loading…</p>}
+      {track && !error && !tracks && <div className="px-2 py-2"><TrackRowsSkeleton rows={6} /></div>}
       {track && tracks && tracks.length === 0 && (
         <p data-testid="similar-empty" className="px-4 py-8 text-center text-sm text-muted">No similar tracks found yet.</p>
       )}

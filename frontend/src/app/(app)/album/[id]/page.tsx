@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { PageSkeleton } from "@/components/Loaders";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
@@ -18,7 +19,7 @@ export default function AlbumPage() {
   }, [id]);
 
   if (error) return <p role="alert" className="text-danger">{error}</p>;
-  if (!album) return <p className="text-muted">Loading…</p>;
+  if (!album) return <PageSkeleton />;
   return (
     <div className="space-y-6">
       <header className="space-y-3">

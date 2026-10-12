@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { post } from "@/lib/api";
+import { SoundBars } from "@/components/Loaders";
 import { useAuth } from "@/store/auth";
 
 interface Tokens { access_token: string; refresh_token: string }
@@ -54,7 +55,12 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         <input id="password" type="password" className={field} autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={mode === "register" ? 8 : 1} value={f.password} onChange={set("password")} /></div>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <button disabled={busy} data-testid="auth-submit" className="w-full rounded-full bg-accent py-2.5 font-semibold text-ink disabled:opacity-50">
-        {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
+        {busy ? (
+          <span className="inline-flex items-center justify-center gap-2">
+            <SoundBars size={14} className="[--bars-color:var(--color-ink)]" />
+            {mode === "login" ? "Signing in…" : "Creating account…"}
+          </span>
+        ) : mode === "login" ? "Sign in" : "Create account"}
       </button>
       <p className="text-center text-sm text-muted">
         {mode === "login" ? <>No account? <Link className="text-accent underline" href="/register">Register</Link></> : <>Have an account? <Link className="text-accent underline" href="/login">Sign in</Link></>}

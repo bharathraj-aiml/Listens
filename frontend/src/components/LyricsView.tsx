@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LyricsSkeleton } from "@/components/Loaders";
 import { get } from "@/lib/api";
 import type { Lyrics } from "@/lib/types";
 import { usePlayer } from "@/store/player";
@@ -54,6 +55,15 @@ export default function LyricsView({ trackId, active, glass = false }: { trackId
     return idx;
   }, [synced, currentTime]);
 
+  // How far playback is through the active line (0-100), so it can fill like a karaoke sweep. A line lasts until the next
+  // one starts, capped so a long instrumental gap does not crawl; the last line gets a few seconds.
+  const lineProgress = useMemo(() => {
+    if (!synced || activeIndex < 0) return 0;
+    const start = synced[activeIndex].time;
+    const span = Math.min(Math.max((synced[activeIndex + 1]?.time ?? start + 5) - start, 0.5), 8);
+    return Math.min(100, Math.max(0, ((currentTime - start) / span) * 100));
+  }, [synced, activeIndex, currentTime]);
+
   // Follow the active line, but only inside the panel's own scroll area. scrollIntoView would also
   // scroll every scrollable ancestor (the page / Now Playing sheet) and drag them along.
   useEffect(() => {
@@ -67,7 +77,7 @@ export default function LyricsView({ trackId, active, glass = false }: { trackId
   const note = glass ? "text-lg font-medium text-white/60" : "text-sm text-muted";
   if (!trackId) return <p className={note}>Nothing playing.</p>;
   if (error) return <p role="alert" className={glass ? "text-lg font-medium text-white/80" : "text-sm text-danger"}>{error}</p>;
-  if (!data) return <p className={note}>Loading…</p>;
+  if (!data) return <LyricsSkeleton glass={glass} />;
 
   if (synced && glass) {
     // Apple Music style: big bold lines, the current one bright and the rest dimmed and softly
@@ -82,9 +92,9 @@ export default function LyricsView({ trackId, active, glass = false }: { trackId
               ref={i === activeIndex ? activeRef : undefined}
               data-testid={i === activeIndex ? "lyrics-active-line" : undefined}
               onClick={() => requestSeek(line.time)}
-              style={{ filter: dist === 0 ? "none" : `blur(${Math.min(dist, 3) * 0.6}px)` }}
+              style={{ filter: dist === 0 ? "none" : `blur(${Math.min(dist, 3) * 0.6}px)`, ...(i === activeIndex ? ({ "--line": `${lineProgress}%` } as React.CSSProperties) : {}) }}
               className={`origin-left cursor-pointer text-[1.75rem] font-bold leading-tight transition-all duration-500 ${
-                i === activeIndex ? "scale-100 text-white opacity-100" : "scale-[0.96] text-white opacity-35"
+                i === activeIndex ? "lyric-sweep scale-100 text-white opacity-100" : "scale-[0.96] text-white opacity-35"
               }`}
             >
               {line.text}
@@ -102,7 +112,8 @@ export default function LyricsView({ trackId, active, glass = false }: { trackId
             key={i}
             ref={i === activeIndex ? activeRef : undefined}
             data-testid={i === activeIndex ? "lyrics-active-line" : undefined}
-            className={`text-lg leading-relaxed transition-colors ${i === activeIndex ? "font-semibold text-accent" : "text-muted"}`}
+            style={i === activeIndex ? ({ "--line": `${lineProgress}%`, "--lyric-lit": "var(--color-accent)", "--lyric-dim": "var(--color-muted)" } as React.CSSProperties) : undefined}
+            className={`text-lg leading-relaxed transition-colors ${i === activeIndex ? "lyric-sweep font-semibold text-accent" : "text-muted"}`}
           >
             {line.text}
           </p>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AlbumGridSkeleton } from "@/components/Loaders";
 import { useEffect, useState } from "react";
 import Cover from "@/components/Cover";
 import { get } from "@/lib/api";
@@ -21,7 +22,7 @@ export default function AlbumsPage() {
         <p className="text-sm text-muted">Grouped automatically from each track&apos;s album tag.</p>
       </header>
       {error && <p role="alert" className="text-danger">{error}</p>}
-      {albums === null && !error && <p className="text-muted">Loading…</p>}
+      {albums === null && !error && <AlbumGridSkeleton />}
       {albums && albums.length === 0 && (
         <div className="rounded-xl border border-dashed border-line p-8 text-center text-muted">
           No albums yet. Tracks with the same album tag (an OST, an EP, a movie soundtrack) will group here automatically.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { PageSkeleton } from "@/components/Loaders";
 import { useEffect, useState } from "react";
 import FollowButton from "@/components/FollowButton";
 import TrackList, { PlayAllButton } from "@/components/TrackList";
@@ -16,7 +17,7 @@ export default function ArtistPage() {
   }, [id]);
 
   if (error) return <p role="alert" className="text-danger">{error}</p>;
-  if (!artist) return <p className="text-muted">Loading…</p>;
+  if (!artist) return <PageSkeleton />;
   return (
     <div className="space-y-6">
       <header className="space-y-3">

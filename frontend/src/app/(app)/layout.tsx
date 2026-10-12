@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import AmbientBackdrop from "@/components/AmbientBackdrop";
 import BackButton from "@/components/BackButton";
+import { CenteredLoader } from "@/components/Loaders";
 import LyricsPanel from "@/components/LyricsPanel";
 import NavHistory from "@/components/NavHistory";
 import RecentsTracker from "@/components/RecentsTracker";
@@ -39,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (accessToken) loadLikes();
   }, [accessToken, loadLikes]);
 
-  if (!ready || !accessToken) return null;
+  if (!ready || !accessToken) return <CenteredLoader label="Starting Shadow Listens" />;
 
   return (
     <div className="min-h-dvh md:pl-60">
