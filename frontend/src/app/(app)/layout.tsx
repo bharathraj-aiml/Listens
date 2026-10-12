@@ -19,6 +19,7 @@ import type { User } from "@/lib/types";
 import { useAuth } from "@/store/auth";
 import { useLayout } from "@/store/layout";
 import { useLikes } from "@/store/likes";
+import { usePlayer } from "@/store/player";
 
 /**
  * Authenticated shell. Because this layout stays mounted while you navigate between its pages,
@@ -31,6 +32,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const loadLikes = useLikes((s) => s.load);
   const collapsed = useLayout((s) => s.sidebarCollapsed);
   const loadLayout = useLayout((s) => s.load);
+  // any of the right-hand panels open: on desktop the page makes room for it instead of sliding underneath
+  const panelOpen = usePlayer((s) => s.lyricsOpen || s.queueOpen || s.similarOpen);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadLayout(); }, [loadLayout]);
@@ -49,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     // --side is the desktop sidebar's footprint; the main column and the player bar both offset by it
     <div
-      className="min-h-dvh transition-[padding] duration-300 ease-out motion-reduce:transition-none md:pl-[var(--side)]"
+      className={`min-h-dvh transition-[padding] duration-300 ease-out motion-reduce:transition-none md:pl-[var(--side)] ${panelOpen ? "md:pr-[25rem]" : ""}`}
       style={{ "--side": collapsed ? "5.25rem" : "15rem" } as React.CSSProperties}
     >
       <AmbientBackdrop />

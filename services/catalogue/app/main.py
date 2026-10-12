@@ -9,7 +9,7 @@ from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from listens_common import dedupe
+from listens_common import artists, dedupe
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
 from listens_common.models import Album, Artist, Follow, Track
@@ -55,11 +55,10 @@ def health() -> dict:
 # ---------------------------------------------------------------- upload
 
 def _find_or_create_artist(db: Session, user_id: uuid.UUID, name: str) -> Artist:
-    artist = db.scalar(
-        select(Artist).where(Artist.owner_user_id == user_id, func.lower(Artist.name) == name.lower())
-    )
+    # "A/B", "A, B" and "A;B" are one credit: match whatever separators the existing artist was stored with
+    artist = artists.find_artist(db, user_id, name)
     if artist is None:
-        artist = Artist(name=name, owner_user_id=user_id)
+        artist = Artist(name=artists.canonical_credit(name), owner_user_id=user_id)
         db.add(artist)
         db.flush()
     return artist
