@@ -40,11 +40,11 @@ export default function Sidebar() {
 
       {/* mobile: bottom tab bar. A glass pill slides to the active tab (spring-like overshoot), the active icon
           lifts and pops once when it becomes active. All motion is dropped for prefers-reduced-motion. */}
-      <nav aria-label="Main" className="glass-clear fixed inset-x-3 bottom-3 z-30 flex h-14 rounded-full px-1.5 md:hidden">
+      <nav aria-label="Main" className="glass-clear fixed inset-x-3 bottom-3 z-30 flex h-14 rounded-full px-2.5 md:hidden">
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-y-1 left-1.5 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.64,1)] motion-reduce:transition-none"
-          style={{ width: `calc((100% - 0.75rem) / ${NAV.length})`, transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`, opacity: activeIndex < 0 ? 0 : 1 }}
+          className="pointer-events-none absolute inset-y-1 left-2.5 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.64,1)] motion-reduce:transition-none"
+          style={{ width: `calc((100% - 1.25rem) / ${NAV.length})`, transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`, opacity: activeIndex < 0 ? 0 : 1 }}
         >
           <span className="glass-lens -mx-1.5 block h-full rounded-full" />
         </span>
