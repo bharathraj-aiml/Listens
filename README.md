@@ -3,7 +3,7 @@
 A Spotify-inspired music streaming platform, built as a portfolio project, with original branding
 and artwork. Music comes only from files you upload and own, or Creative Commons / royalty-free
 tracks (Free Music Archive, Jamendo, etc.). Built in phases, each one finished and tested before
-the next starts.
+the next starts. It is live, running entirely on free tiers (see "Deployment (free tier)").
 
 - ✅ **Phase 1 – Foundation:** monorepo, Docker Compose stack, Alembic schema, auth service
   (JWT access + rotating refresh tokens), API gateway.
@@ -18,27 +18,43 @@ the next starts.
   fallback via `librosa` tempo/energy then same-artist/genre.
 - ✅ **Phase 6 – Smarter suggestions and shuffle** (tuned for Tamil film music): a hybrid recommender that works for
   one listener on a small library, plus a flow-aware shuffle. See "Suggestions and shuffle" below.
+- ✅ **Phase 7 – Live on free tiers:** two Cloudflare Workers (the site, and a cache in front of Backblaze B2) in front of
+  Render, Neon and Upstash, at zero cost. See "Deployment (free tier)".
+- ✅ **Phase 8 – Liquid-glass UI and polish:** glass design and a mobile tab bar, "Recently played" that updates live,
+  loading skeletons, a "waking up the server" banner, an animated seek bar and lyrics timeline, and a collapsible
+  desktop sidebar. See "Interface".
 
 ## Layout
 
 ```
 .
-├── docker-compose.yml          # postgres, redis, migrate, auth, catalogue, stream, worker, events, recommender, frontend, gateway
+├── docker-compose.yml          # local stack: postgres, redis, migrate, auth, catalogue, stream, worker, events, recommender, frontend, gateway
+├── render.yaml                 # the same services as Render blueprints (free tier)
+├── cloudflare-worker.js        # the site Worker: routes /api/* straight to the right service, warms sleepers, retries
+├── wrangler.toml               # config for the site Worker (+ cloudflare-worker.test.mjs)
+├── cdn/                        # the CDN Worker: Cloudflare cache in front of Backblaze B2 (own README, tests, live verifier)
 ├── .env.example                # copy to .env
-├── gateway/nginx.conf          # single entry point (:8080): /api/auth, /api/catalogue, /api/stream, / -> web app
-├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper
-│   └── tests/                  # migration-vs-models test, signing tests
-├── migrations/                 # Alembic: 0001 schema, 0002 catalogue + full-text (GIN), 0003 lyrics, 0004 audio features + vectors
+├── gateway/nginx.conf          # local single entry point (:8080); in production the site Worker does this job
+├── .github/workflows/cron-tick.yml   # pokes the background services on a slow schedule (free-tier friendly)
+├── libs/common/                # shared: settings, SQLAlchemy models, JWT/bcrypt, URL signing, S3 helper, dedupe, artist credits
+│   └── tests/                  # migration-vs-models, signing, dedupe, artists, music metadata
+├── migrations/                 # Alembic 0001-0005: schema, catalogue + full-text, lyrics, audio features + vectors, taste features
 ├── services/
 │   ├── auth/                   # register / login / refresh / logout / profile
-│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events ingest, analytics, recommendations
+│   ├── catalogue/               # upload, tracks, artists, albums, search, playlists, likes, follows, lyrics, home, events, analytics, recommendations
 │   ├── stream/                  # issues signed URLs, serves HLS + covers from private storage (Range/206 + Cache-Control pass-through)
-│   ├── worker/                  # Redis-Stream consumer: FFmpeg -> HLS renditions + cover art + librosa audio features
-│   ├── events/                  # Redis-Stream consumer: play/skip events -> play_events rows
+│   ├── worker/                  # transcode: FFmpeg -> HLS renditions + cover art + librosa audio features
+│   ├── events/                  # drains the Redis event stream (fallback path) into play_events
 │   └── recommender/              # scheduled job: builds the interaction matrix, trains ALS, writes user/track vectors
-├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ Playwright e2e)
+├── frontend/                   # Next.js 15 · React 19 · TypeScript · Tailwind 4 · Zustand · hls.js (+ unit tests, Playwright e2e)
 └── scripts/
     ├── import_folder.py        # bulk-import a music folder through the public API
+    ├── import_local_folder.py  # import a folder straight into the database + B2 and transcode it on this PC
+    ├── run_local_worker.sh     # run the transcode worker on this PC against production (fast; Render's is the slow fallback)
+    ├── enrich_library.py       # fetch artist relatedness / tags and audio fingerprints for the recommender
+    ├── dedupe_library.py       # list / delete duplicate songs (same title + artist, compatible album)
+    ├── normalize_artists.py    # merge artists that differ only by "/" vs "," credit separators
+    ├── register_b2_orphans.py  # add songs that are in the B2 bucket but missing from the app
     └── setup_b2_cors.py        # one-off: apply CORS rules to the B2 audio/covers buckets
 ```
 
@@ -69,12 +85,89 @@ Re-runnable: each file's SHA-256 is checked with the server first, so already-im
 without being re-uploaded. Tags (title/artist/album/genre) are read server-side; untagged files fall back to
 the filename and "Unknown Artist". Budget disk for originals **plus** HLS (roughly 1.5–2× the source size).
 
+## Deployment (free tier)
+
+```
+browser
+  ├─► Cloudflare Worker  shadow-listens        (cloudflare-worker.js)
+  │     /api/auth ─────────► Render  auth       ─┐
+  │     /api/catalogue ────► Render  catalogue ──┼─► Neon Postgres, Upstash Redis
+  │     /api/stream ───────► Render  stream    ─┘   (signs audio links)
+  │     everything else ───► Render  frontend  (Next.js)
+  │
+  └─► Cloudflare Worker  shadow-listens-cdn    (cdn/)   audio + covers, cached ─► Backblaze B2 (private buckets)
+
+background (slow, on a schedule): Render worker (transcode) · events · recommender, poked by GitHub Actions cron-tick.yml
+```
+
+| Piece | Where | Why |
+|---|---|---|
+| Web app + APIs | Render free web services | free, but each one **sleeps after ~15 min idle** |
+| Database / Redis | Neon / Upstash | free tiers |
+| Audio, covers | Backblaze B2 (private) | free 10 GB, but a **1 GB/day download cap** and a daily cap on read requests |
+| Cache in front of B2 | `cdn/` Worker | serves repeat plays from Cloudflare's cache so B2 is read once per file (see `cdn/README.md`) |
+| Front door | `cloudflare-worker.js` | routes straight to each service, warms sleeping ones, retries safe requests |
+
+**Cold starts.** A sleeping service answers its first request after ~20-30 s. Called from outside Render that request
+simply waits and succeeds. Called from *inside* Render (the old nginx gateway talking to a sleeping sibling) it gets an
+instant `502`, which is why the site Worker talks to the services directly. It also pings auth/catalogue/stream when the
+home or login page is opened, so they wake while you type, and retries `GET`s that hit a `502/503/504`. The UI shows a
+"Waking up the server" banner when any request is pending for more than 3 s.
+
+**Background work.** `.github/workflows/cron-tick.yml` pokes the worker every 6 h (UTC), events at 02:50 and the
+recommender at 03:00. It is deliberately infrequent: Render's free plan gives the whole workspace 750 instance-hours a
+month, and keeping services awake around the clock would use them all. For faster transcoding run the worker on your own
+PC (`scripts/run_local_worker.sh`, against production) while the laptop is on; each job goes to exactly one worker.
+A manual-only `warm-front-services` job wakes the user-facing services before you share the link.
+
+**Settings that matter.**
+
+| Variable | Meaning |
+|---|---|
+| `STREAM_PUBLIC_PREFIX` | where signed links point; set to the CDN Worker's address so audio goes through the cache |
+| `STREAM_SIGNING_SECRET` | must be identical on the stream service and the CDN Worker (it verifies the links itself) |
+| `EVENTS_VIA_QUEUE` | `false` (default): play events are written to Postgres directly; `true`: via the Redis stream and the events service |
+| `S3_*` | Backblaze B2 endpoint, region, keys and bucket names |
+
+**Backblaze limits.** Reading originals for transcoding counts against the same daily download cap as playback. Import in
+small batches (the scripts report how many bytes they will download), and let the CDN absorb playback.
+`cdn/test/verify_live.py` checks the live Worker end to end (cache `MISS` then `HIT`, bad tokens refused).
+
+**Library maintenance.**
+
+```bash
+set -a; source .env.prod; set +a                        # production values (gitignored)
+.venv/Scripts/python scripts/normalize_artists.py       # merge "A/B" and "A, B" artists   (--apply to commit)
+.venv/Scripts/python scripts/dedupe_library.py          # duplicate songs                  (--apply to delete)
+.venv/Scripts/python scripts/register_b2_orphans.py     # songs in B2 but not in the app   (--apply to add)
+```
+
+Artist credits are normalised to `A, B` whatever separator the tags used (`A/B`, `A;B`); uploads match existing artists
+by that key, so the same credit never splits into two artists.
+
+## Interface
+
+- **Liquid-glass design** with a rose accent; every glass surface falls back to a solid colour when the system asks for
+  reduced transparency. Mobile has a floating glass tab bar with a sliding lens; desktop has a sidebar that **collapses to
+  an icon rail** (button at its top, remembered per browser), and the Lyrics / Queue / Similar panels slide in from the
+  right while the page makes room for them and stops above the player bar so its seek line stays visible.
+- **Loading states.** Skeletons shaped like the content (track rows, album grid, detail header, lyrics) instead of
+  "Loading…", sound-bar loaders for short waits, a progress state on the sign-in button, and the "Waking up the server"
+  banner (elapsed seconds + sweeping bar; no fake percentage) once a request has been pending for 3 s. Play events and
+  background refreshes never raise the banner. Code: `components/Loaders.tsx`, `WakingBanner.tsx`, `store/net.ts`.
+- **Timeline.** The seek bar (`components/Timeline.tsx`) is still a real range input (keyboard, screen readers and
+  tap-to-seek work) with a fill that glides between position updates, a handle that grows under a finger and softly
+  pulses while playing, and a sweeping track while buffering. In the lyrics view the current line fills left to right
+  with its progress. All motion stops under `prefers-reduced-motion`.
+- **Recently played** reflects what you actually listened to (a song counts after 8 s, so skips don't), updates live
+  without a refresh from an on-device list merged with the server's.
+
 ## What to test
 
 1. **Auth:** register → you land on Home, sign out, sign in (by username or email). `/upload` while signed out redirects to login.
 2. **Upload:** pick 2+ files, tick the rights box (the button stays disabled until you do). Watch statuses flip to *Ready*.
    Re-upload the same file → "already uploaded". Upload a text file renamed `.mp3` → it ends *Failed* with a reason.
-3. **Player:** play/pause, drag the seek bar, volume, **Quality** (Auto / 96 / 160 / 320 — only renditions that exist
+3. **Player:** play/pause, drag the seek bar (the fill follows, the handle breathes while playing), volume, **Quality** (Auto / 96 / 160 / 320 — only renditions that exist
    for that track are listed), next/previous (previous restarts the track if you're >3 s in), the queue panel (jump, remove),
    *Next*/＋ buttons on rows. Navigate between pages while playing: music and mini-player keep going.
 4. **Mobile:** open on a phone (or a narrow window): bottom tab bar, compact player, lock-screen controls (Media Session).
@@ -99,7 +192,11 @@ the filename and "Unknown Artist". Budget disk for originals **plus** HLS (rough
 14. **Made for you:** once `services/recommender` has trained at least once (immediately on stack startup, then every
     `RECOMMENDER_TRAIN_INTERVAL_HOURS`), a user with enough listening history gets ALS-ranked picks, capped at 2 per
     artist; everyone else still sees the Phase 3 heuristic/new-releases fallback — the section is never empty.
-
+15. **Loading and cold start:** throttle or delay the API in dev-tools: pages show skeletons, a request pending for 3 s
+    shows the "Waking up the server" banner, and both disappear when the data arrives. Sign in shows a progress state.
+16. **Desktop layout:** collapse and expand the sidebar (it stays collapsed after a reload); open Lyrics and confirm the
+    page content narrows beside it and the player bar's seek line is fully visible below the panel.
+17. **Artists:** a collaboration credited with `/` in one file and `,` in another is one artist with one page.
 
 ## Tests
 
@@ -108,7 +205,7 @@ python -m venv .venv
 .venv\Scripts\pip install -e "libs/common[web,storage]" -r services/catalogue/requirements.txt -r services/worker/requirements.txt -r services/recommender/requirements.txt pytest httpx fakeredis alembic "moto[server]"   # Windows
 # source .venv/bin/activate && pip install ...                                                                                                   # macOS/Linux
 # needs ffmpeg + ffprobe on PATH; set OPENBLAS_NUM_THREADS=1 to avoid BLAS/thread-pool contention under pytest
-(cd libs/common        && pytest)   # signing + "migrations produce exactly the ORM schema"
+(cd libs/common        && pytest)   # signing, dedupe, artist credits, "migrations produce exactly the ORM schema"
 (cd services/auth      && pytest)
 (cd services/catalogue && pytest)   # upload, catalogue, search, playlists, likes, follows, lyrics, events, analytics, recommendations
 (cd services/stream    && pytest)   # signed URLs, path whitelist, expiry/tamper cases
@@ -116,9 +213,18 @@ python -m venv .venv
 (cd services/events    && pytest)   # Redis Stream consumer: insert/retry/drop/sweep logic
 (cd services/recommender && pytest) # matrix weighting/clamping, ALS training + vector persistence, a block-structure correctness check
 
+# the Cloudflare Workers, and the frontend's pure logic (shuffle, recents, wait timing):
+node --test cloudflare-worker.test.mjs       # site Worker routing, Location rewriting, retries
+(cd cdn && npm test)                         # CDN Worker token verification, against tokens minted by the Python signer
+(cd frontend && npm run test:unit)           # shuffle, recents merge, request-wait timing
+python cdn/test/e2e_local.py                 # CDN Worker against a local fake B2 (needs wrangler)
+python cdn/test/verify_live.py               # the deployed CDN Worker: cache MISS then HIT, bad tokens refused
+
 # Postgres full-text search (incl. "planner really uses the GIN indexes" check) needs a real database:
 TEST_PG_URL=postgresql+psycopg2://user@localhost:5432/scratch_db  (cd services/catalogue && pytest tests/test_search_postgres.py)
 ```
+
+Backend tests need `S3_REGION=us-east-1` in the environment (the S3 client refuses to start without a region).
 
 Browser end-to-end, against a running stack - four specs: the core player flow (register → upload →
 transcode → play → seek → quality → queue → persistence → search → logout), playlists/likes/follow/lyrics,
@@ -139,7 +245,7 @@ the AAC default was verified below), or set `HLS_AUDIO_CODEC=mp3` in `.env` and 
 ## How it works
 
 **Upload pipeline.** `POST /api/catalogue/upload` (multipart) validates extension/size/rights, hashes the file (dedupe per user),
-reads tags with `mutagen`, stores the original in MinIO (`originals/<id>/source.ext`), inserts the track as `uploaded`,
+reads tags with `mutagen`, stores the original in Backblaze B2 (`originals/<id>/source.ext`), inserts the track as `uploaded`,
 and `XADD`s a job to the Redis Stream `jobs:transcode`. A worker (consumer group, at-least-once) atomically claims the track
 (`uploaded → processing`), runs `ffprobe` (rejects non-audio), then one FFmpeg run produces AAC renditions as 6 s MPEG-TS
 segments + a master playlist, uploads them to `hls/<id>/…`, extracts embedded cover art, and marks the track `ready` (or retries
@@ -164,7 +270,8 @@ over them (`services/catalogue/app/library.py`), no new microservice. A playlist
 otherwise only to its owner; any authenticated user can add/remove/reorder tracks on an `is_collaborative` playlist (there's
 no per-playlist member list — "collaborative" means "anyone with an account on this server"). Reordering renumbers the whole
 list by position, which is fine at personal-playlist sizes. "Made for you" is a heuristic (liked/played artists, excluding
-already-played tracks, falling back to newest releases so it's never empty) — real ALS recommendations are Phase 5.
+already-played tracks, falling back to newest releases so it's never empty); the hybrid recommender (Phase 6) now
+ranks it. "Recently played" lists the last distinct songs you listened to for at least 8 seconds.
 
 **Lyrics.** Read at upload time with `mutagen`: ID3 `USLT` (plain) and `SYLT` (time-synced, converted to LRC
 `[mm:ss.xx]text` lines; only millisecond-based `SYLT` timing can be converted — frame-based timing is skipped, not
@@ -173,17 +280,18 @@ embedded in every track response. The player's Lyrics panel highlights the curre
 **Most files won't have any of this** — checked across the 160 real MP3s used for Phase 2 testing, zero had embedded
 lyrics in any common frame, so expect "No lyrics available" unless a file was tagged with a tool that writes `USLT`/`SYLT`.
 
-**Event tracking.** `POST /api/catalogue/events` (play_start / play_end / skip) `XADD`s to the Redis Stream `jobs:events`
-and returns immediately - it's a hot path (fires on every track load and every skip), so it doesn't wait on a database
-write. A dedicated `events` service (the same consumer-group pattern as the transcode worker) drains that stream into
-`play_events`. `like` and `add_to_playlist` aren't client-submittable event types; they're published server-side as a
+**Event tracking.** `POST /api/catalogue/events` (play_start / play_end / skip) is a hot path (fires on every track
+load and every skip). By default it inserts the row into `play_events` directly (one cheap write, and the history is
+current immediately, which "Recently played" needs); if that write fails it falls back to `XADD`ing the event to the
+Redis Stream `jobs:events`, and with `EVENTS_VIA_QUEUE=true` every event goes through the stream. A dedicated `events`
+service (the same consumer-group pattern as the transcode worker) drains that stream into `play_events`. `like` and `add_to_playlist` aren't client-submittable event types; they're published server-side as a
 side effect of the existing `/likes` and `/playlists/*/tracks` endpoints, so there's one write path per mutation, not two.
 The player tracks actual played-time per track from `timeupdate` deltas (clamped per tick so a seek can't inflate it),
 and tags the outgoing track's closing event as `play_end` (natural completion, via the `ended` handler) or `skip` (an
 explicit reason - `next_button` / `previous_button` / `track_select` - threaded through the player store by whichever
 action caused the change). A "stream" only counts for the Analytics page once `ms_played >= 30000`.
 
-**Recommendations.** `services/recommender` builds a weighted user×track interaction matrix from
+**Recommendations (Phase 5, ALS).** `services/recommender` builds a weighted user×track interaction matrix from
 `play_events`/`likes`/`playlist_tracks` — a full listen (≥90% of duration) is +1, every repeat full
 listen beyond the first is an additional +2, a save (like or playlist-add) is +3, an early skip
 (<30s in) is −2, summed per pair and clamped to ≥0 (confidence-weighted implicit ALS needs
@@ -212,7 +320,15 @@ the original spec's request to show the maths, not just use the library.
 - **HLS playlist paths use `.as_posix()`, not `str(Path)`:** a real Windows-specific bug found during testing — `ffmpeg`
   on Windows wrote literal backslashes into the generated `.m3u8` playlist text (`q96\index.m3u8`), which breaks every
   HLS player since segment references are URLs. Fixed in `services/worker/app/transcode.py`; harmless on Linux too.
-- **MinIO image swap** (see note above) — a real-world infra surprise, not a design choice.
+- **MinIO, then Backblaze B2:** the project started on MinIO (and had to swap its image mid-way); storage is now
+  Backblaze B2, which brought a daily download cap and led to the CDN Worker.
+- **The 502 that was not a cold start:** requests that hop *inside* Render to a sleeping sibling service get an instant
+  `502` instead of waiting, while the same request from outside waits ~25 s and succeeds. Moving the routing into the
+  site Worker (outside Render) removed the failure rather than papering over it with retries.
+- **Backblaze's cap looks like a missing file:** an exhausted daily cap returns 403, which reads like "object not found".
+  The CDN Worker reports it as 503 (retryable) and never caches a failure.
+- **Artist credits:** tags separate collaborators with `/`, `,` or `;`, so one credit became several artist rows.
+  Credits now have one canonical spelling and one comparison key (`listens_common/artists.py`).
 - **Python's `0 or -1` falsy-zero trap:** the first track added to a playlist (position 0) was getting duplicated at
   position 0 again, because `(max_position or -1) + 1` treats a real `0` the same as "no rows yet". Fixed to an explicit
   `is None` check; covered by a regression test.
@@ -265,8 +381,11 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- All 117 Python tests (5 + 13 + 53 + 7 + 17 + 9 + 13 across the seven Python packages) and a clean `tsc --noEmit`/
-  `next build` pass locally, outside Docker.
+- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 190 Python tests
+  (common 31, auth 16, catalogue 84 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
+  11 site-Worker tests, 6 CDN-Worker tests and 18 frontend unit tests, all passing; the new interface states were also
+  checked in a real browser with a mocked, deliberately slow API (skeletons, banner timing, sign-in state, seek-bar fill,
+  reduced motion, sidebar collapse and persistence, panel layout).
 - **Phase 3:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes, follows,
   a collaborative playlist edited by a second account, reorder, recently-played ordering, made-for-you fallback); a
   Playwright spec covering playlists/likes/follow/lyrics; the Phase 2 player spec updated for the new multi-section
@@ -325,5 +444,5 @@ Nothing is excluded, it is a bias. Unit tests: `cd frontend && npm run test:unit
 
 ## Next
 
-Smarter suggestions are built; next is measuring them against your listening: skip rate on recommended
-songs vs. the old ALS and heuristic picks.
+Measure the suggestions against your listening (skip rate on recommended songs vs. the old ALS and heuristic picks),
+and give a track several artists properly (a many-to-many link) so a collaboration shows up on every credited artist's page.
