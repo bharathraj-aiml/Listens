@@ -1,35 +1,92 @@
-// Shadow Listens - Cloudflare Worker reverse proxy in front of the Render gateway.
+// Shadow Listens - the site Worker (https://shadow-listens.shadow-listens.workers.dev).
 //
-// Why this exists: Cloudflare's CDN can't front a custom domain we don't own, and a free
-// *.onrender.com subdomain can't be put behind Cloudflare either (Cloudflare needs to be
-// authoritative DNS for whatever's in front, and we don't own onrender.com). A Worker sidesteps
-// both problems - it gets its own free *.workers.dev subdomain automatically, runs on
-// Cloudflare's edge (including PoPs near India), and can proxy to any origin over the internet.
+// It is the front door and does the gateway's job itself: /api/auth, /api/catalogue and /api/stream go to
+// those services and everything else to the frontend, exactly like gateway/nginx.render.conf.template.
 //
-// Caching: NOT WORKING, verified live. Despite the origin sending correct Cache-Control
-// (immutable/1yr segments - see services/worker/app/jobs.py), every segment came back with
-// CF-Cache-Status: DYNAMIC, i.e. a plain fetch() proxy to a third-party *.onrender.com origin is
-// not cached at the edge. Trying Workers Cache ([cache] enabled in wrangler.toml, which needs
-// the Worker to rewrite response headers) coincided with Cloudflare error 1000 (403) on
-// requests; the cause wasn't isolated (see AGENT_HANDOFF.md section 11), so it was reverted.
-// This Worker is currently a plain pass-through proxy: it gives a Cloudflare-terminated URL
-// but no cache benefit.
+// Why not just forward to the Render gateway (the earlier design)? Render's free services sleep after ~15
+// idle minutes. A request from OUTSIDE Render to a sleeping service is held for ~20-30 s while it wakes and
+// then succeeds. The gateway runs INSIDE Render, and its hop to a sleeping sibling is answered with an
+// instant "502 Bad Gateway" instead (measured: the same request made from outside waited 23 s and worked).
+// So the first visit after any idle spell showed a 502 until something else woke the services. Calling the
+// services directly from here removes that hop. Nothing here runs on a schedule, so it costs no Render hours
+// beyond the services actually being used.
 //
-// Known limitation (free tier): Cloudflare Workers caps request bodies at 100MB, below this
-// app's own MAX_UPLOAD_MB=500 setting. Uploads over 100MB will fail through this Worker's URL.
-// Accepted tradeoff per user decision - most individual audio files are well under 100MB.
+// Also: on an entry page (/, /login, /register) the other services are pinged in parallel so they wake while
+// the page loads rather than one after another once the app starts calling them, and a GET that still gets
+// 502/503/504 (a service mid-wake or mid-deploy) is retried a couple of times. Non-GET requests are never
+// retried (their body cannot be replayed).
+//
+// Known limit (free plan): Cloudflare caps request bodies at 100 MB, below the app's 500 MB upload setting.
+// Uploads over 100 MB fail through this address.
 
-const ORIGIN = "https://shadow-listens-gateway.onrender.com";
+export const UPSTREAMS = {
+  frontend: "https://shadow-listens-frontend.onrender.com",
+  auth: "https://shadow-listens-auth.onrender.com",
+  catalogue: "https://shadow-listens-catalogue.onrender.com",
+  stream: "https://shadow-listens-stream.onrender.com",
+};
+
+const API_SERVICES = ["auth", "catalogue", "stream"];
+const ENTRY_PAGES = new Set(["/", "/login", "/register"]);
+const RETRYABLE = new Set([502, 503, 504]);
+const RETRIES = 2;
+const RETRY_DELAY_MS = 4000;
+
+/** Which service handles this path, and the path to ask it for: "/api/auth/login" -> auth "/login". */
+export function routeFor(pathname) {
+  for (const name of API_SERVICES) {
+    const prefix = `/api/${name}/`;
+    if (pathname.startsWith(prefix)) return { name, path: "/" + pathname.slice(prefix.length) };
+  }
+  return { name: "frontend", path: pathname };
+}
+
+/** Point a redirect back at this site instead of at the service's own *.onrender.com address. */
+export function rewriteLocation(location, siteOrigin) {
+  if (!location) return location;
+  for (const base of Object.values(UPSTREAMS)) {
+    if (location === base || location.startsWith(base + "/") || location.startsWith(base + "?")) return siteOrigin + location.slice(base.length);
+  }
+  return location;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchService(url, request) {
+  const replayable = request.method === "GET" || request.method === "HEAD";
+  for (let attempt = 0; ; attempt++) {
+    let res = null;
+    try {
+      res = await fetch(new Request(url, request));
+    } catch (err) {
+      if (!replayable || attempt >= RETRIES) throw err;
+    }
+    if (res && (!replayable || !RETRYABLE.has(res.status) || attempt >= RETRIES)) return res;
+    await sleep(RETRY_DELAY_MS);
+  }
+}
 
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const originUrl = ORIGIN + url.pathname + url.search;
+    if (url.pathname === "/healthz") return new Response("ok\n", { headers: { "Cache-Control": "no-store" } });
 
-    // Preserve method/headers/body from the original request; only the URL changes. The target
-    // URL's own hostname is what determines the outbound Host header/TLS SNI - no need to set
-    // it explicitly (Workers' fetch() may not even allow overriding it).
-    const originRequest = new Request(originUrl, request);
-    return fetch(originRequest);
+    const { name, path } = routeFor(url.pathname);
+
+    if (request.method === "GET" && ENTRY_PAGES.has(url.pathname) && (request.headers.get("accept") || "").includes("text/html")) {
+      // wake the API services while the page itself loads (a no-op for any that are already awake)
+      for (const svc of API_SERVICES) ctx.waitUntil(fetch(`${UPSTREAMS[svc]}/health`).catch(() => {}));
+    }
+
+    let res;
+    try {
+      res = await fetchService(UPSTREAMS[name] + path + url.search, request);
+    } catch {
+      return new Response("The server is starting up. Please try again in a moment.", { status: 503, headers: { "Retry-After": "10", "Cache-Control": "no-store" } });
+    }
+    const out = new Response(res.body, res);
+    const location = out.headers.get("Location");
+    if (location) out.headers.set("Location", rewriteLocation(location, url.origin));
+    return out;
   },
 };
