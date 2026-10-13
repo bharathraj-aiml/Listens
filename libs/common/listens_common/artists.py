@@ -49,7 +49,8 @@ def credit_key(raw: str | None) -> str:
     names = credit_names(raw)
     if not names:
         return norm(raw)
-    return "|".join(sorted({norm(n) for n in names}))
+    # through person_name, so a known misspelling ("Harish Ragavendra") has the same key as the right spelling
+    return "|".join(sorted({norm(person_name(n)) for n in names}))
 
 
 def find_artist(db: Session, owner_id: uuid.UUID, raw: str) -> Artist | None:
@@ -106,6 +107,9 @@ def merge_artists(db: Session) -> MergeReport:
         for loser in (a for a in rows if a.id != survivor.id):
             db.execute(update(Track).where(Track.artist_id == loser.id).values(artist_id=survivor.id))
             db.execute(update(Album).where(Album.artist_id == loser.id).values(artist_id=survivor.id))
+            already = select(TrackArtist.track_id).where(TrackArtist.artist_id == survivor.id)
+            db.execute(delete(TrackArtist).where(TrackArtist.artist_id == loser.id, TrackArtist.track_id.in_(already)))  # credits both
+            db.execute(update(TrackArtist).where(TrackArtist.artist_id == loser.id).values(artist_id=survivor.id))
             for f in db.scalars(select(Follow).where(Follow.target_type == "artist", Follow.target_id == loser.id)):
                 if db.get(Follow, (f.follower_id, "artist", survivor.id)) is None:
                     db.add(Follow(follower_id=f.follower_id, target_type="artist", target_id=survivor.id, created_at=f.created_at))

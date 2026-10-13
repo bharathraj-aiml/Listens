@@ -113,3 +113,60 @@ def test_resolve_on_a_unique_song_changes_nothing():
     t = add_track(db, u)
     assert dedupe.resolve_duplicates(db, MagicMock(), SimpleNamespace(), t.id) == []
     assert db.get(Track, t.id) is not None
+
+
+# ------------------------------------------------- spelling variants of the same song
+
+def _song(title, people=(1,), album=None, ms=300_000):
+    return dedupe.SongInfo(title, set(people), album, ms)
+
+
+def test_spelling_variants_of_a_title_are_the_same_song():
+    assert dedupe.likely_same_song(_song("En Veettu Thottathil"), _song("En Veetu Thotathil", ms=301_000))
+    assert dedupe.likely_same_song(_song("Aaruyire"), _song('Aaruyire (From "Guru")'))
+    assert dedupe.likely_same_song(_song('Kurukku Siruthvalea - From "Mudhalvan"'), _song("Kurukku Chiruthavale"))
+    assert not dedupe.likely_same_song(_song("Moon Walk"), _song("Sun Rise"))
+
+
+def test_a_slowed_live_or_remixed_version_is_not_a_duplicate():
+    assert not dedupe.likely_same_song(_song("Jumpstyle"), _song("Jumpstyle - Slowed"))
+    assert not dedupe.likely_same_song(_song("Ku Lo Sa"), _song("KU LO SA - A COLORS SHOW"))
+    assert dedupe.likely_same_song(_song("Song (Remix)"), _song("Song - Remix"))  # the same version on both sides
+
+
+def test_a_very_different_length_or_an_unrelated_artist_is_not_a_duplicate():
+    assert not dedupe.likely_same_song(_song("Same Name", ms=240_000), _song("Same Name", ms=330_000))
+    assert not dedupe.likely_same_song(_song("Same Name", people=(1,), album="A"), _song("Same Name", people=(2,), album="B", ms=240_000 + 9_000))
+
+
+def test_strict_mode_needs_a_known_close_length_and_a_shared_artist():
+    a = _song("Same Name", ms=240_000)
+    assert dedupe.likely_same_song(a, _song("Same Name", ms=243_000), strict=True)
+    assert not dedupe.likely_same_song(a, _song("Same Name", ms=250_000), strict=True)  # lenient would accept 10 s
+    assert dedupe.likely_same_song(a, _song("Same Name", ms=250_000))
+    assert not dedupe.likely_same_song(a, _song("Same Name", ms=None), strict=True)
+    assert not dedupe.likely_same_song(a, _song("Same Name", people=(9,), ms=240_500), strict=True)
+
+
+def test_similar_groups_links_chains_and_ignores_singletons():
+    songs = [_song("Mazhai Kuruvi"), _song("Mazhai Kuruvi", ms=300_900), _song("Totally Other", people=(5,)), _song("Mazhai Kuruvi (From X)", ms=301_500)]
+    assert [sorted(g) for g in dedupe.similar_groups(songs)] == [[0, 1, 3]]
+
+
+def test_a_new_ready_track_removes_its_spelling_variant_and_play_history_follows():
+    from listens_common.models import PlayEvent
+
+    db, u, _ = make_world()
+    keep = add_track(db, u, title="Veettu Thottathil", artist="Rahman", kbps=192, ms=245_000)
+    twin = add_track(db, u, title="Veetu Thotathil", artist="Rahman", kbps=128, ms=244_000, age_days=1)
+    db.add(PlayEvent(user_id=u.id, track_id=twin.id, event_type="play_end", ms_played=1000, position_ms=0, occurred_at=T0))
+    db.commit()
+    group = dedupe.duplicate_group(db, twin)
+    assert {t.id for t in group} == {keep.id, twin.id}
+    assert dedupe.pick_keeper(group).id == keep.id
+    s3, settings = MagicMock(), SimpleNamespace(s3_bucket_audio="a", s3_bucket_covers="c")
+    from unittest.mock import patch
+
+    with patch("listens_common.storage.delete_prefix"):
+        dedupe.remove_track(db, s3, settings, twin, keep=keep)
+    assert db.query(PlayEvent).one().track_id == keep.id

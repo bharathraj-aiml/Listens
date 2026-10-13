@@ -42,6 +42,14 @@ def cap_per_artist(tracks: list[Track], max_per_artist: int = MAX_PER_ARTIST) ->
     return out
 
 
+def track_moods(db: Session) -> dict[uuid.UUID, mood.Mood]:
+    """Mood of every ready track that has an audio fingerprint (one query; empty for a library too small to compare)."""
+    rows = db.execute(
+        select(Track.id, Track.audio_vector, Track.tempo_bpm, Track.energy).where(Track.status == "ready", Track.audio_vector.is_not(None))
+    ).all()
+    return mood.compute_moods({r[0]: (r[1], r[2], r[3]) for r in rows})
+
+
 def load_library(db: Session, include: set[uuid.UUID] | None = None) -> taste.Library:
     """Every ready track (plus any `include`d ones, e.g. a seed not yet ready) as comparable
     items, with the open-data artist context attached. One query for tracks, one for artist

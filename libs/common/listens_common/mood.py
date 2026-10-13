@@ -102,3 +102,28 @@ def label(valence: float, arousal: float) -> str:
     if valence < 0:
         return "melancholic" if arousal < 0 else "intense"
     return "calm" if arousal < 0 else "upbeat"
+
+
+# What the listener sees and types. The internal quadrant labels stay descriptive; these are the everyday words.
+MOOD_NAMES = {"melancholic": "Sad", "upbeat": "Happy", "calm": "Calm", "intense": "Intense", "balanced": "Balanced"}
+_ALIASES = {
+    "melancholic": ("sad", "melancholic", "melancholy", "emotional", "heartbreak", "heartbroken", "blue", "gloomy", "sorrow", "pain"),
+    "upbeat": ("happy", "upbeat", "energetic", "fun", "party", "dance", "joy", "joyful", "cheerful", "feel good", "feelgood"),
+    "calm": ("calm", "chill", "relax", "relaxing", "soft", "peaceful", "romantic", "romance", "love", "soothing", "mellow"),
+    "intense": ("intense", "angry", "dark", "aggressive", "powerful", "hype", "mass", "epic"),
+    "balanced": ("balanced", "neutral", "medium"),
+}
+
+
+def resolve_mood(text: str) -> str | None:
+    """The quadrant label for a word a listener might type ("sad", "chill", "party"), or None if it is not a mood."""
+    t = " ".join(text.casefold().split())
+    for label_, words in _ALIASES.items():
+        if t in words:
+            return label_
+    return None
+
+
+def strength(m: Mood) -> float:
+    """How strongly a song sits in its mood (distance from the library's middle): the best examples sort first."""
+    return math.hypot(m.valence, m.arousal)

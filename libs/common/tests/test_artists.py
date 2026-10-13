@@ -160,3 +160,27 @@ def test_split_credits_turns_credit_rows_into_people_and_keeps_every_track_reach
 def test_known_misspellings_are_the_same_person():
     for wrong, right in [("Harish Ragavendra", "Harish Raghavendra"), ("S.P.Balasubramniam", "S. P. Balasubrahmanyam"), ("Sadhna Sargam", "Sadhana Sargam")]:
         assert artists.person_name(wrong) == right == artists.person_name(right)
+
+
+def test_a_misspelt_artist_merges_into_the_right_spelling_and_keeps_every_credit_link():
+    db, u = _world()
+    right = _artist(db, u, "Harish Raghavendra", tracks=2)
+    wrong = _artist(db, u, "Harish Ragavendra", tracks=1, day=2)
+    other = _artist(db, u, "Mano", tracks=1)
+    t_wrong = db.query(Track).filter_by(artist_id=wrong.id).one()
+    # a song credited to BOTH spellings and to Mano: the link rows must collapse to one, not collide
+    artists.set_track_artists(db, t_wrong, [wrong, other])
+    for t in db.query(Track).filter_by(artist_id=right.id):
+        artists.set_track_artists(db, t, [right])
+    artists.set_track_artists(db, db.query(Track).filter_by(artist_id=other.id).one(), [other])
+    db.flush()
+
+    artists.merge_artists(db)
+    db.flush()
+
+    assert sorted(a.name for a in db.query(Artist)) == ["Harish Raghavendra", "Mano"]
+    for t in db.query(Track):
+        db.refresh(t)
+    names = {t.title: [a.name for a in t.artists] for t in db.query(Track)}
+    assert names[t_wrong.title] == ["Harish Raghavendra", "Mano"]
+    assert all(t.artists for t in db.query(Track))  # nobody lost their credit

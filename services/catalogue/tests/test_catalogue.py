@@ -110,3 +110,55 @@ def test_search_fallback_matches_title_artist_genre_and_hides_unready(env):
     assert [t["title"] for t in q("SYNTH")["tracks"]] == ["Midnight Drive"]
     assert {p["name"] for p in q("midnight")["playlists"]} == {"Midnight mix", "Midnight public"}
     assert q("100%")["tracks"] == []  # LIKE wildcards are escaped
+
+
+# ------------------------------------------------------- search filters
+
+def test_search_can_be_limited_to_artist_album_or_genre(env):
+    seed(env, "Alpha", artist="Rahman", album="Guru", genre="Soundtrack")
+    seed(env, "Beta", artist="Rahman", album="Roja", genre="Folk")
+    seed(env, "Guru Song", artist="Other", album="Else", genre="Pop")  # "guru" only in a TITLE, and "Rahman" nowhere
+    s = lambda q, by: env.client.get("/search", params={"q": q, "by": by}, headers=env.headers).json()  # noqa: E731
+
+    by_artist = s("rahman", "artist")
+    assert sorted(t["title"] for t in by_artist["tracks"]) == ["Alpha", "Beta"]
+    assert [a["name"] for a in by_artist["artists"]] == ["Rahman"] and by_artist["albums"] == []
+
+    by_album = s("guru", "album")  # the album, not the song that merely has "Guru" in its title
+    assert [t["title"] for t in by_album["tracks"]] == ["Alpha"]
+    assert [a["title"] for a in by_album["albums"]] == ["Guru"]
+
+    assert [t["title"] for t in s("folk", "genre")["tracks"]] == ["Beta"]
+    assert s("nothing-here", "genre")["tracks"] == []
+    assert env.client.get("/search", params={"q": "x", "by": "bogus"}, headers=env.headers).status_code == 422
+
+
+def test_search_by_mood_finds_songs_of_that_mood_and_facets_list_what_exists(env):
+    import numpy as np
+
+    major = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+    minor = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+    ids = {}
+    for k in range(6):  # filler songs so the library has a spread to compare against
+        ids[f"mid{k}"] = seed(env, f"mid{k}", artist="Filler", genre="Pop")[0]
+    ids["sad"] = seed(env, "Slow Minor", artist="Sad Singer", genre="Soundtrack")[0]
+    ids["happy"] = seed(env, "Fast Major", artist="Happy Singer", genre="Soundtrack")[0]
+
+    def vec(chroma, centroid, zcr):
+        return [0.0] * 13 + list(map(float, chroma)) + [0.0] * 7 + [centroid, zcr]
+
+    spec = {f"mid{k}": (vec(np.roll(major if k % 2 else minor, k), 2000 + 100 * k, 0.08), 100 + 4 * k, 0.05 + 0.002 * k) for k in range(6)}
+    spec["sad"] = (vec(minor, 1200, 0.04), 60, 0.02)
+    spec["happy"] = (vec(major, 3200, 0.14), 150, 0.12)
+    with env.sessions() as db:
+        for key, (v, tempo, energy) in spec.items():
+            db.query(Track).filter_by(id=uuid.UUID(ids[key])).update({"audio_vector": v, "tempo_bpm": tempo, "energy": energy})
+        db.commit()
+
+    s = lambda q: env.client.get("/search", params={"q": q, "by": "mood"}, headers=env.headers).json()["tracks"]  # noqa: E731
+    assert s("sad")[0]["title"] == "Slow Minor"  # the clearest example of the mood comes first
+    assert s("party")[0]["title"] == "Fast Major"  # everyday words map to a mood
+    assert s("banana") == []
+    f = env.client.get("/search/facets", headers=env.headers).json()
+    assert {m["name"] for m in f["moods"]} >= {"Sad", "Happy"}
+    assert {"name": "Soundtrack", "count": 2} in f["genres"]

@@ -5,13 +5,16 @@ Byte-identical files are already stopped by the (uploader, sha256) unique index.
 SONG in a different file, e.g. a re-encode: same uploader, same normalised title + artist, compatible
 album, and (once both are transcoded) lengths within a few seconds.
 """
+import difflib
+import re
 import unicodedata
 import uuid
+from dataclasses import dataclass, field
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from .models import Album, Artist, Like, PlaylistTrack, Track, TrackArtist
+from .models import Album, Artist, Like, PlayEvent, PlaylistTrack, Track, TrackArtist
 
 DURATION_TOLERANCE_MS = 3000
 LIVE_STATUSES = ("uploaded", "processing", "ready")
@@ -24,6 +27,91 @@ def norm(text: str | None) -> str:
     (marks matter: dropping Tamil vowel signs would make different words collide)."""
     s = unicodedata.normalize("NFKC", text or "").casefold()
     return " ".join("".join(ch if unicodedata.category(ch)[0] in "LMN" else " " for ch in s).split())
+
+
+# ---------------------------------------------------------------- spelling variants of the same song
+
+# Words that make two similar titles DIFFERENT recordings (a slowed edit, a live take, a remix...): never merged.
+_VERSION = re.compile(
+    r"\b(slowed|sped ?up|reverb|remix|live|acoustic|instrumental|karaoke|cover|colou?rs show|lo-?fi|mashup|unplugged|demo|"
+    r"remaster(?:ed)?|female|male|reprise|bgm)\b"
+)
+_ROMANISATION = (("aa", "a"), ("ee", "i"), ("ii", "i"), ("oo", "u"), ("uu", "u"), ("ai", "i"), ("ei", "i"), ("th", "t"), ("dh", "d"),
+                 ("zh", "l"), ("ph", "f"), ("kh", "k"), ("gh", "g"), ("w", "v"), ("y", "i"))
+
+
+def title_skeleton(title: str | None) -> str:
+    """A title with spelling noise removed, so "Veettu Thottathil" and "Veetu Thotathil" match: drops "(From ...)" /
+    "[...]" / "- From ..." suffixes, folds doubled letters and common Tamil romanisation variants (aa/a, th/t, zh/l, ...)."""
+    t = unicodedata.normalize("NFKC", title or "").casefold()
+    t = re.sub(r"\(.*?\)|\[.*?\]", " ", t)
+    t = re.split(r"\s[-–—]\s", t)[0]
+    t = re.sub(r"[^a-z0-9஀-௿ ]", "", t)
+    for a, b in _ROMANISATION:
+        t = t.replace(a, b)
+    t = re.sub(r"(.)\1+", r"\1", t)  # doubled letters: "tt" -> "t"
+    return re.sub(r"\s+", "", t)
+
+
+def version_words(title: str | None) -> frozenset[str]:
+    return frozenset(m.group(0) for m in _VERSION.finditer((title or "").casefold()))
+
+
+@dataclass
+class SongInfo:
+    title: str
+    people: set = field(default_factory=set)  # credited artist ids
+    album: str | None = None
+    duration_ms: int | None = None
+
+    @classmethod
+    def of(cls, track: Track, album_title: str | None = None) -> "SongInfo":
+        album = album_title if album_title is not None else (track.album.title if track.album else None)
+        return cls(track.title, {a.id for a in (track.artists or [track.artist])}, album, track.duration_ms)
+
+
+SAME_DURATION_MS = 5_000
+DIFFERENT_DURATION_MS = 12_000
+
+
+def likely_same_song(a: SongInfo, b: SongInfo, *, strict: bool = False) -> bool:
+    """True when two files are probably the same recording with a spelling change in the title or credit: similar title
+    skeleton, the same version (no "slowed" vs plain), compatible length, and a shared artist or album. `strict` (used
+    for automatic removal) additionally requires both lengths to be known and within 5 s, and a near-identical title."""
+    if version_words(a.title) != version_words(b.title):
+        return False
+    ka, kb = title_skeleton(a.title), title_skeleton(b.title)
+    if not ka or not kb:
+        return False
+    ratio = 1.0 if ka == kb else difflib.SequenceMatcher(None, ka, kb).ratio()
+    known = a.duration_ms is not None and b.duration_ms is not None
+    gap = abs(a.duration_ms - b.duration_ms) if known else None
+    related = bool(a.people & b.people) or (a.album is not None and b.album is not None and norm(a.album) == norm(b.album))
+    if strict:
+        return known and gap <= SAME_DURATION_MS and ratio >= 0.9 and related
+    if ratio < 0.84 or (known and gap > DIFFERENT_DURATION_MS):
+        return False
+    return (known and gap <= SAME_DURATION_MS) or (related and ratio >= 0.88)
+
+
+def similar_groups(songs: list[SongInfo], *, strict: bool = False) -> list[list[int]]:
+    """Groups (as index lists, only those with 2+ members) of songs that are likely the same recording."""
+    parent = list(range(len(songs)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(songs)):
+        for j in range(i + 1, len(songs)):
+            if likely_same_song(songs[i], songs[j], strict=strict):
+                parent[find(i)] = find(j)
+    groups: dict[int, list[int]] = {}
+    for i in range(len(songs)):
+        groups.setdefault(find(i), []).append(i)
+    return [g for g in groups.values() if len(g) > 1]
 
 
 def _album_compatible(a: str | None, b: str | None) -> bool:
@@ -76,6 +164,7 @@ def remove_track(db: Session, s3, settings, track: Track, keep: Track | None = N
             if db.get(Like, (like.user_id, keep.id)) is None:
                 db.add(Like(user_id=like.user_id, track_id=keep.id, created_at=like.created_at))
         db.execute(update(PlaylistTrack).where(PlaylistTrack.track_id == tid).values(track_id=keep.id))
+        db.execute(update(PlayEvent).where(PlayEvent.track_id == tid).values(track_id=keep.id))  # listens count for the kept copy
     db.execute(delete(Like).where(Like.track_id == tid))
     db.execute(delete(TrackArtist).where(TrackArtist.track_id == tid))
     db.delete(track)
@@ -95,6 +184,12 @@ def duplicate_group(db: Session, track: Track) -> list[Track]:
     twins = find_duplicates(db, track.uploader_id, track.title, credit_of(track) if artist else "",
                             album.title if album else None, duration_ms=track.duration_ms, exclude_id=track.id)
     twins = [t for t in twins if t.status == "ready"]
+    # plus spelling variants of the title/credit (strict: same length within 5 s and a shared artist or album)
+    me = SongInfo.of(track)
+    have = {t.id for t in twins} | {track.id}
+    for other in db.scalars(select(Track).where(Track.uploader_id == track.uploader_id, Track.status == "ready", Track.id.notin_(have))).unique():
+        if likely_same_song(me, SongInfo.of(other), strict=True):
+            twins.append(other)
     return [track, *twins] if twins else []
 
 

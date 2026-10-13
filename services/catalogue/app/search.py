@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
+from listens_common import mood as moodlib
 from listens_common.models import Album, Artist, Playlist, Track, TrackArtist
 
 
@@ -104,3 +105,61 @@ def search(db: Session, q: str, user_id: uuid.UUID, limit: int = 10) -> dict[str
         .where(or_(Playlist.is_public.is_(True), Playlist.owner_id == user_id)).limit(limit)
     ).all()
     return {"tracks": tracks, "artists": artists, "albums": albums, "playlists": playlists}
+
+
+# ------------------------------------------------------------- filtered search
+
+FILTERS = ("all", "artist", "album", "genre", "mood")
+_EMPTY = {"tracks": [], "artists": [], "albums": [], "playlists": []}
+
+
+def _ready_tracks(db: Session, *where, limit: int) -> list[Track]:
+    return db.scalars(select(Track).where(Track.status == "ready", *where).order_by(Track.created_at.desc()).limit(limit)).unique().all()
+
+
+def search_by(db: Session, q: str, by: str, limit: int = 10) -> dict[str, list]:
+    """Search ONE field: artist (every song they are credited on), album (its songs), genre, or mood ("sad", "chill",
+    "party"). Plain substring match, case-insensitive: these are short tag values, not prose, so full-text ranking adds
+    nothing here. `by="all"` is the ordinary search."""
+    pat, esc = _like(q), "\\"
+    if by == "artist":
+        artists = db.scalars(select(Artist).where(func.lower(Artist.name).like(pat, escape=esc)).order_by(Artist.name).limit(limit)).all()
+        ids = [a.id for a in artists]
+        credited = select(TrackArtist.track_id).where(TrackArtist.artist_id.in_(ids))
+        tracks = _ready_tracks(db, or_(Track.artist_id.in_(ids), Track.id.in_(credited)), limit=limit * 3) if ids else []
+        return {**_EMPTY, "tracks": tracks, "artists": artists}
+    if by == "album":
+        albums = db.scalars(select(Album).where(func.lower(Album.title).like(pat, escape=esc)).order_by(Album.title).limit(limit)).unique().all()
+        ids = [a.id for a in albums]
+        return {**_EMPTY, "tracks": _ready_tracks(db, Track.album_id.in_(ids), limit=limit * 3) if ids else [], "albums": albums}
+    if by == "genre":
+        return {**_EMPTY, "tracks": _ready_tracks(db, func.lower(func.coalesce(Track.genre, "")).like(pat, escape=esc), limit=limit * 3)}
+    if by == "mood":
+        label = moodlib.resolve_mood(q)
+        if label is None:
+            return dict(_EMPTY)
+        from .recommendations import track_moods  # lazy: recommendations imports this package's taste module
+
+        moods = {t: m for t, m in track_moods(db).items() if m.label == label}
+        ranked = sorted(moods, key=lambda t: -moodlib.strength(moods[t]))[: limit * 3]
+        by_id = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_(ranked))).unique()}
+        return {**_EMPTY, "tracks": [by_id[i] for i in ranked if i in by_id]}
+    return search(db, q, uuid.UUID(int=0), limit)  # not reached through the API (it routes "all" itself)
+
+
+def facets(db: Session) -> dict[str, list[dict]]:
+    """What can be filtered on: the genres in the library and the moods with how many songs sit in each."""
+    genres = db.execute(
+        select(func.lower(Track.genre), func.min(Track.genre), func.count()).where(Track.status == "ready", Track.genre.is_not(None), Track.genre != "")
+        .group_by(func.lower(Track.genre)).order_by(func.count().desc()).limit(30)
+    ).all()
+    from .recommendations import track_moods
+
+    counts: dict[str, int] = {}
+    for m in track_moods(db).values():
+        counts[m.label] = counts.get(m.label, 0) + 1
+    return {
+        "genres": [{"name": g[1], "count": g[2]} for g in genres],
+        "moods": [{"id": label, "name": moodlib.MOOD_NAMES[label], "query": moodlib.MOOD_NAMES[label].lower(), "count": counts[label]}
+                  for label in ("melancholic", "upbeat", "calm", "intense", "balanced") if counts.get(label)],
+    }

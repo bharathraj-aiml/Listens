@@ -337,15 +337,22 @@ def get_album(
 
 # ---------------------------------------------------------------- search
 
+@app.get("/search/facets")
+def search_facets(user_id: uuid.UUID = Depends(current_user_id), db: Session = Depends(get_db)) -> dict:
+    """Genres and moods present in the library, for the search filter's quick picks."""
+    return search_mod.facets(db)
+
+
 @app.get("/search", response_model=SearchOut)
 def search(
     q: str = Query(min_length=1, max_length=100),
     limit: int = Query(10, ge=1, le=50),
+    by: str = Query("all", pattern="^(all|artist|album|genre|mood)$"),  # search one field instead of everything
     user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> SearchOut:
-    hits = search_mod.search(db, q.strip(), user_id, limit)
+    hits = search_mod.search(db, q.strip(), user_id, limit) if by == "all" else search_mod.search_by(db, q.strip(), by, limit)
     return SearchOut(
         tracks=[track_out(t, settings, user_id) for t in hits["tracks"]],
         artists=[ArtistRef(id=a.id, name=a.name) for a in hits["artists"]],
