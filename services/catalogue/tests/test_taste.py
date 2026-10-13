@@ -179,3 +179,27 @@ def test_a_joint_credit_is_linked_to_each_person_named_in_it():
     mk = lambda artist: taste.Item(id=uuid.uuid4(), artist_id=artist)
     assert lib.artist_affinity(mk(joint), mk(solo)) > 0.3  # shares Hariharan
     assert lib.artist_affinity(mk(joint), mk(other)) == 0.0
+
+
+# -------------------------------------------------------------------- mood
+
+def test_a_matching_mood_beats_the_same_artist_with_the_wrong_mood():
+    from listens_common.mood import Mood
+
+    lib = taste.Library([])
+    artist = uuid.uuid4()
+    sad = item(artist_id=artist, mood=Mood(-1.5, -1.2), tempo=70, energy=0.1)
+    sad_other_artist = item(mood=Mood(-1.3, -1.0), tempo=72, energy=0.1)
+    happy_same_artist = item(artist_id=artist, mood=Mood(1.4, 1.2), tempo=70, energy=0.1)
+    assert lib.similarity(sad, sad_other_artist) > lib.similarity(sad, happy_same_artist) * 2
+
+
+def test_songs_without_a_mood_are_scored_exactly_as_before():
+    from listens_common.mood import Mood
+
+    lib = taste.Library([])
+    a, b = item(tempo=120, energy=0.4, genre="Pop"), item(tempo=118, energy=0.42, genre="pop")
+    with_mood = lambda x, m: taste.Item(**{**x.__dict__, "mood": m})  # noqa: E731
+    assert lib.similarity(a, b) == lib.similarity(with_mood(a, None), with_mood(b, None))
+    assert taste.mood_gate_for(a, with_mood(b, Mood(0, 0))) == 1.0  # one side unknown: no effect
+    assert taste.mood_gate(1.0) == 1.0 and taste.mood_gate(0.0) == taste.MOOD_GATE_FLOOR

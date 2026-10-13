@@ -392,8 +392,8 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 196 Python tests
-  (common 34, auth 16, catalogue 87 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
+- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 202 Python tests
+  (common 38, auth 16, catalogue 89 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
   11 site-Worker tests, 6 CDN-Worker tests and 21 frontend unit tests, all passing; the new interface states were also
   checked in a real browser with a mocked, deliberately slow API (skeletons, banner timing, sign-in state, seek-bar fill,
   reduced motion, sidebar collapse and persistence, panel layout).
@@ -433,9 +433,21 @@ ALS (Phase 5) needs many listeners; with one user and a small library it learns 
 | Signal | Source |
 |---|---|
 | Audio fingerprint (timbre, harmony, brightness) | `librosa` in the worker, stored in `tracks.audio_vector` |
+| **Mood** (sad ↔ happy, calm ↔ intense) | estimated from the fingerprint, see below |
 | Tempo and loudness (half/double time counts as a match) | `librosa` |
 | Artist relatedness | ListenBrainz "similar artists" (real listening sessions) and MusicBrainz tags, stored in `artist_meta` |
 | Same film (album title), era, language | album tag, album date, Tamil script, and a built-in 80s/90s/modern Tamil singer and composer list (`tamil_seed.py`) |
+
+**Mood-based.** Similar tracks follow the *mood* of the song you play, not its artist: a sad song's neighbours are sad
+songs, whoever sings them. `listens_common/mood.py` places each song on two axes (valence: sad/dark ↔ happy/bright, arousal:
+calm/soft ↔ energetic/intense, the circumplex model used in music-emotion research) from the stored fingerprint, so no new
+audio processing is needed. Valence comes from key mode (major vs minor via the Krumhansl-Schmuckler key profiles on the
+chroma means), brightness and tempo; arousal from loudness, brightness, percussiveness and tempo; each is z-scored across
+*your* library. When both songs have a mood it is the leading similarity term (40%), artist closeness drops to 7%, a mood
+mismatch scales the whole score down to 30%, and the co-listening (ALS) boost and the diversity re-ranking can no longer pull
+in a song of the wrong mood. It is an estimate, not ground truth (mode is a weak signal for modal Indian film music, and the
+beat tracker can halve or double tempo), which is why it is blended with the other signals. Checked on this library: a sad
+seed (`Mannipaaya`) returns 10 of 10 melancholic songs, an upbeat one (`My Name is Billa`) 10 of 10 upbeat, across many artists.
 
 Your taste is the songs you liked, saved or finished (repeats count more) minus early skips; a candidate scores by its
 closeness to the nearest of those, so a 90s and a 2020s taste can coexist. Results are re-ranked (MMR) so they are

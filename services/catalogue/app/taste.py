@@ -15,6 +15,10 @@ signal just drops that term and the rest are re-weighted, so a brand-new upload 
   era       release-year closeness (a 90s Rahman song sits nearer 90s songs than 2020s ones)
   language  same script (Tamil vs other); unknown when titles are romanised, then skipped
   genre     same genre tag
+  mood      how close the two songs feel (listens_common.mood: sad..happy x calm..intense, estimated from the
+            fingerprint). When both songs have a mood it is the dominant signal and artist closeness shrinks to
+            a small one, and a mood mismatch scales the whole score down, so a sad song's neighbours are sad
+            songs, whoever sings them.
 
 A listener's taste is the weighted set of tracks they liked, saved to playlists, or finished
 (repeat listens count more), minus tracks they skipped early. A candidate scores by its
@@ -29,7 +33,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from listens_common import mood as moodlib
+
 W_AUDIO, W_ARTIST, W_RHYTHM, W_ALBUM, W_ERA, W_LANGUAGE, W_GENRE = 0.30, 0.28, 0.12, 0.12, 0.06, 0.07, 0.05
+# Weights once both songs have a mood: mood leads, artist is a minor tie-breaker (the listener asked for "sad songs", not
+# "more of this singer").
+M_MOOD, M_AUDIO, M_ARTIST, M_RHYTHM, M_ALBUM, M_ERA, M_LANGUAGE, M_GENRE = 0.40, 0.18, 0.07, 0.08, 0.05, 0.04, 0.07, 0.03
+MOOD_GATE_FLOOR = 0.30  # a complete mood mismatch keeps at most this fraction of the score
 ERA_SCALE_YEARS = 6.0
 TASTE_TOP_K = 5
 NEGATIVE_PENALTY = 0.5
@@ -65,6 +75,7 @@ class Item:
     energy: float | None = None
     language: str | None = None
     vec: np.ndarray | None = None  # standardised + unit length, see Library.standardise
+    mood: moodlib.Mood | None = None  # estimated from the fingerprint, relative to the library (listens_common.mood)
 
 
 @dataclass
@@ -136,12 +147,20 @@ class Library:
         return value
 
     def similarity(self, a: Item, b: Item) -> float:
+        moody = a.mood is not None and b.mood is not None
+        w_audio, w_artist, w_rhythm, w_album, w_era, w_language, w_genre = (
+            (M_AUDIO, M_ARTIST, M_RHYTHM, M_ALBUM, M_ERA, M_LANGUAGE, M_GENRE) if moody
+            else (W_AUDIO, W_ARTIST, W_RHYTHM, W_ALBUM, W_ERA, W_LANGUAGE, W_GENRE)
+        )
         parts: list[tuple[float, float]] = []  # (weight, value 0..1)
+        mood_match = moodlib.match(a.mood, b.mood) if moody else None
+        if mood_match is not None:
+            parts.append((M_MOOD, mood_match))
         if a.vec is not None and b.vec is not None:
-            parts.append((W_AUDIO, max(0.0, float(a.vec @ b.vec))))
+            parts.append((w_audio, max(0.0, float(a.vec @ b.vec))))
         affinity = self.artist_affinity(a, b)
         if affinity is not None:
-            parts.append((W_ARTIST, affinity))
+            parts.append((w_artist, affinity))
         rhythm = []
         if a.tempo and b.tempo:
             r = abs(math.log2(a.tempo / b.tempo))
@@ -149,17 +168,30 @@ class Library:
         if a.energy and b.energy:
             rhythm.append(math.exp(-abs(math.log(a.energy / b.energy))))
         if rhythm:
-            parts.append((W_RHYTHM, sum(rhythm) / len(rhythm)))
+            parts.append((w_rhythm, sum(rhythm) / len(rhythm)))
         if a.album_key and b.album_key:
-            parts.append((W_ALBUM, 1.0 if a.album_key == b.album_key else 0.0))
+            parts.append((w_album, 1.0 if a.album_key == b.album_key else 0.0))
         if a.year and b.year:
-            parts.append((W_ERA, math.exp(-abs(a.year - b.year) / ERA_SCALE_YEARS)))
+            parts.append((w_era, math.exp(-abs(a.year - b.year) / ERA_SCALE_YEARS)))
         if a.language and b.language:
-            parts.append((W_LANGUAGE, 1.0 if a.language == b.language else 0.0))
+            parts.append((w_language, 1.0 if a.language == b.language else 0.0))
         if a.genre and b.genre:
-            parts.append((W_GENRE, 1.0 if a.genre.casefold() == b.genre.casefold() else 0.0))
+            parts.append((w_genre, 1.0 if a.genre.casefold() == b.genre.casefold() else 0.0))
         total = sum(w for w, _ in parts)
-        return sum(w * v for w, v in parts) / max(total, MIN_EVIDENCE) if total else 0.0
+        score = sum(w * v for w, v in parts) / max(total, MIN_EVIDENCE) if total else 0.0
+        if mood_match is not None:
+            score *= mood_gate(mood_match)  # a mood mismatch scales everything down
+        return score
+
+
+def mood_gate(match: float) -> float:
+    """Factor 0.3..1 applied to a score by how well the moods match (1 = same mood)."""
+    return MOOD_GATE_FLOOR + (1 - MOOD_GATE_FLOOR) * match
+
+
+def mood_gate_for(a: Item, b: Item) -> float:
+    """The gate for two items; 1 (no effect) when either has no mood estimate."""
+    return mood_gate(moodlib.match(a.mood, b.mood)) if a.mood is not None and b.mood is not None else 1.0
 
 
 def taste_score(lib: Library, candidate: Item, weights: dict[uuid.UUID, float]) -> float | None:

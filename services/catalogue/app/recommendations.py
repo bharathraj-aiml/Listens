@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import taste
-from listens_common import tamil_seed
+from listens_common import mood, tamil_seed
 from listens_common.models import (
     Album, Artist, ArtistMeta, Like, PlayEvent, PlaylistTrack, Track, TrackVector, UserVector,
 )
@@ -56,6 +56,7 @@ def load_library(db: Session, include: set[uuid.UUID] | None = None) -> taste.Li
         .where((Track.status == "ready") | (Track.id.in_(include or set())))
     ).all()
     standardised = taste.Library.standardise({r[0]: r[6] for r in rows if r[6]})
+    moods = mood.compute_moods({r[0]: (r[6], r[4], r[5]) for r in rows if r[6]})
     seeds = {r[1]: tamil_seed.lookup(r[8]) for r in rows}  # artist_id -> built-in Tamil entry, if any
     items = []
     for r in rows:
@@ -65,7 +66,7 @@ def load_library(db: Session, include: set[uuid.UUID] | None = None) -> taste.Li
             # the album's own date wins; otherwise the artist's peak years stand in for it
             year=r[10].year if r[10] else (seed.year if seed else None),
             language=taste.detect_language(r[7], r[8], r[9], r[11]) or ("ta" if seed and seed.tamil_core else None),
-            vec=standardised.get(r[0]),
+            vec=standardised.get(r[0]), mood=moods.get(r[0]),
         ))
     artists: dict[uuid.UUID, taste.ArtistInfo] = {
         artist_id: taste.ArtistInfo(circle=seed.circle) for artist_id, seed in seeds.items() if seed
@@ -234,14 +235,20 @@ def hybrid_similar(db: Session, track: Track, limit: int, user_id: uuid.UUID | N
             ids = list(vecs)
             cos = cosine_similarity([own.vector], [vecs[i] for i in ids])[0]
             als_n = taste.rank_normalise(dict(zip(ids, map(float, cos))))
-            scores = {t: 0.6 * als_n.get(t, 0.5) + 0.4 * s for t, s in scores.items()}
+            als_weight = 0.25 if seed.mood is not None else 0.6  # co-listening knows nothing of mood: let mood lead
+            scores = {t: als_weight * als_n.get(t, 0.5) + (1 - als_weight) * s for t, s in scores.items()}
+    # whatever blended in (co-listening above all), a song of the wrong mood stays down: the seed's mood decides
+    scores = {t: s * taste.mood_gate_for(seed, lib.items[t]) for t, s in scores.items()}
     if user_id is not None:
         weights = listener_weights(db, user_id)
         mine = {o.id: v for o in others if (v := taste.taste_score(lib, o, weights)) is not None}
         if mine:
             mine_n = taste.rank_normalise(mine)
             scores = {t: 0.85 * s + 0.15 * mine_n.get(t, 0.0) for t, s in scores.items()}
-    return _in_order(db, taste.mmr(lib, scores, limit, lam=0.8, per_artist=3))
+    # diversity re-ranking rewards songs unlike the ones already picked, which for a mood-led list would pull in the wrong
+    # mood; with a mood estimate it only breaks near-ties
+    lam = 0.95 if seed.mood is not None else 0.8
+    return _in_order(db, taste.mmr(lib, scores, limit, lam=lam, per_artist=3))
 
 
 def similar_tracks(db: Session, track: Track, limit: int, user_id: uuid.UUID | None = None) -> list[Track]:
