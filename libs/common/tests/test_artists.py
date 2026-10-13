@@ -184,3 +184,14 @@ def test_a_misspelt_artist_merges_into_the_right_spelling_and_keeps_every_credit
     names = {t.title: [a.name for a in t.artists] for t in db.query(Track)}
     assert names[t_wrong.title] == ["Harish Raghavendra", "Mano"]
     assert all(t.artists for t in db.query(Track))  # nobody lost their credit
+
+
+def test_merge_never_removes_an_artist_that_is_only_credited_never_first():
+    db, u = _world()
+    lead = _artist(db, u, "Lead", tracks=1)
+    guest = artists.ensure_artists(db, u.id, "Guest")[0]  # no song has Guest as its primary artist
+    artists.set_track_artists(db, db.query(Track).one(), [lead, guest])
+    db.flush()
+    report = artists.merge_artists(db)
+    db.flush()
+    assert sorted(a.name for a in db.query(Artist)) == ["Guest", "Lead"] and report.empty_removed == 0

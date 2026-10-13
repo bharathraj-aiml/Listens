@@ -115,7 +115,9 @@ def similar_groups(songs: list[SongInfo], *, strict: bool = False) -> list[list[
 
 
 def _album_compatible(a: str | None, b: str | None) -> bool:
-    na, nb = norm(a), norm(b)
+    from .albums import clean_album_title  # lazy: albums imports norm from here
+
+    na, nb = norm(clean_album_title(a)), norm(clean_album_title(b))
     return not na or not nb or na == nb  # a missing album doesn't make it a different song
 
 

@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+
 /** Deterministic per-id hue, so a track's placeholder gradient (and NowPlayingSheet's ambient
  *  background wash, for tracks without cover art) is stable rather than re-randomizing. */
 export function hue(id: string) {
@@ -6,12 +10,14 @@ export function hue(id: string) {
   return h;
 }
 
-/** Cover art, or a deterministic gradient placeholder when the track has none. */
+/** Cover art, or a deterministic gradient placeholder when the track has none or its image cannot be loaded (an
+ *  expired link, a network blip): the placeholder, never the browser's broken-image icon. */
 export default function Cover({ id, url, size = 44, className = "" }: { id: string; url: string | null; size?: number; className?: string }) {
   const style = { width: size, height: size };
-  if (url) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (url && failedUrl !== url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt="" loading="lazy" style={style} className={`shrink-0 rounded-md object-cover ${className}`} />;
+    return <img src={url} alt="" loading="lazy" style={style} onError={() => setFailedUrl(url)} className={`shrink-0 rounded-md object-cover ${className}`} />;
   }
   const h = hue(id);
   return (

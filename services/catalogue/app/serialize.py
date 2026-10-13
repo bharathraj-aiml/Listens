@@ -17,7 +17,10 @@ def _bucketed_ttl(full_ttl: int) -> int:
     a day-long cache window - see cover_url_ttl_seconds."""
     now = int(time.time())
     bucket_end = ((now // full_ttl) + 1) * full_ttl
-    return bucket_end - now
+    # one extra window on top: a link minted just before the boundary must still be valid for a full window, or a page
+    # left open across the boundary (and its lazily loaded thumbnails) would break within minutes. Still the same
+    # token for everyone inside a window, so the browser and CDN caches keep hitting.
+    return bucket_end - now + full_ttl
 
 
 def track_out(track: Track, settings: Settings, user_id: uuid.UUID | None = None) -> TrackOut:

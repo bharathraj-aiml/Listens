@@ -96,7 +96,11 @@ def merge_artists(db: Session) -> MergeReport:
     albums that then collide, and drop artists nothing refers to. Moves tracks, albums, follows and open-data
     metadata onto the survivor. Does not commit: the caller decides (dry run = rollback)."""
     report = MergeReport()
+    # an artist is in use when it is a song's primary artist OR credited on it (track_artists): a collaborator who is
+    # never first-listed still has songs
     track_counts = dict(db.execute(select(Track.artist_id, func.count()).group_by(Track.artist_id)).all())
+    for artist_id, n in db.execute(select(TrackArtist.artist_id, func.count()).group_by(TrackArtist.artist_id)).all():
+        track_counts[artist_id] = max(track_counts.get(artist_id, 0), n)
 
     groups: dict[tuple, list[Artist]] = defaultdict(list)
     for a in db.scalars(select(Artist).order_by(Artist.created_at, Artist.id)):

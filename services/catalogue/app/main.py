@@ -9,7 +9,7 @@ from redis import Redis
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from listens_common import artists, dedupe
+from listens_common import albums as albumlib, artists, dedupe
 from listens_common.config import Settings, get_settings
 from listens_common.db import get_db
 from listens_common.models import Album, Artist, Follow, Track, TrackArtist
@@ -53,15 +53,6 @@ def health() -> dict:
 
 
 # ---------------------------------------------------------------- upload
-
-def _find_or_create_album(db: Session, artist: Artist, title: str) -> Album:
-    album = db.scalar(select(Album).where(Album.artist_id == artist.id, func.lower(Album.title) == title.lower()))
-    if album is None:
-        album = Album(artist_id=artist.id, title=title)
-        db.add(album)
-        db.flush()
-    return album
-
 
 @app.get("/uploads/exists")
 def upload_exists(
@@ -131,7 +122,8 @@ def upload(
     # one artist per person in the credit ("A/B", "A, B" and "A;B" all credit A and B); the first is the primary artist
     people = artists.ensure_artists(db, user_id, final_artist)
     artist_row = people[0]
-    album_row = _find_or_create_album(db, artist_row, album_name.strip()[:200]) if album_name else None
+    # the album title without store boilerplate; the same film under another first-listed singer is the same album
+    album_row = albumlib.find_or_create_album(db, people, album_name.strip()) if album_name else None
 
     track_id = uuid.uuid4()
     source_key = f"originals/{track_id}/source{ext}"

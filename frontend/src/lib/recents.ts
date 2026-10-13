@@ -22,6 +22,7 @@ export function mergeRecents(server: Track[], local: LocalRecent[], limit = RECE
     const have = best.get(track.id);
     if (!have || at > have.at || (at === have.at && fromLocal)) best.set(track.id, { track, at, fromLocal });
   };
+  const fresh = new Map(server.map((t) => [t.id, t]));
   server.forEach((track, i) => {
     const parsed = track.played_at ? Date.parse(track.played_at) : NaN;
     offer(track, Number.isFinite(parsed) ? parsed : -1 - i, false);
@@ -31,5 +32,7 @@ export function mergeRecents(server: Track[], local: LocalRecent[], limit = RECE
     .filter((x) => x.track.status === "ready")
     .sort((a, b) => b.at - a.at || Number(b.fromLocal) - Number(a.fromLocal))
     .slice(0, limit)
-    .map((x) => x.track);
+    // This device's time wins, but the server's copy of the song wins: a song stored on the device days ago carries a
+    // signed cover link that has since expired, while the server's copy always has a fresh one.
+    .map((x) => fresh.get(x.track.id) ?? x.track);
 }

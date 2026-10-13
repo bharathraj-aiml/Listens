@@ -46,8 +46,17 @@ test("songs that are not ready are never shown, and the list is capped", () => {
   assert.equal(out[0].title, "S29");
 });
 
-test("on a tie the local copy wins, so the freshest object (cover url) is the one displayed", () => {
-  const server = track("Same", { played_at: "2026-10-12T01:00:00Z", cover_url: "old" });
-  const local = { ...server, cover_url: "new" };
-  assert.equal(mergeRecents([server], [{ track: local, at: at("2026-10-12T01:00:00Z") }])[0].cover_url, "new");
+test("on a tie the song is shown once, using the server's copy (its cover link is always current)", () => {
+  const server = track("Same", { played_at: "2026-10-12T01:00:00Z", cover_url: "server-fresh" });
+  const local = { ...server, cover_url: "device-old" };
+  const merged = mergeRecents([server], [{ track: local, at: at("2026-10-12T01:00:00Z") }]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].cover_url, "server-fresh");
+});
+
+test("a song stored on the device keeps this device's time but takes the server's fresh copy (its cover link has not expired)", () => {
+  const stale = { ...track("A"), cover_url: "/cover/old-expired-token" };
+  const fresh = { ...track("A"), id: stale.id, cover_url: "/cover/new-token", played_at: new Date(1000).toISOString() };
+  const merged = mergeRecents([fresh], [{ track: stale, at: 5000 }]);
+  assert.deepEqual(merged.map((x) => x.cover_url), ["/cover/new-token"]);
 });

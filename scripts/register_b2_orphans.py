@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "libs" / "common"))
 
 from sqlalchemy import func, or_, select  # noqa: E402
 
-from listens_common import artists, dedupe  # noqa: E402
+from listens_common import albums, artists, dedupe  # noqa: E402
 from listens_common.config import get_settings  # noqa: E402
 from listens_common.db import get_sessionmaker  # noqa: E402
 from listens_common.models import Album, Track, User  # noqa: E402
@@ -111,13 +111,7 @@ def main() -> None:
                 continue
             people = artists.ensure_artists(db, user.id, artist_name)  # one artist per person in the credit
             artist_row = people[0]
-            album_row = None
-            if album_name:
-                album_row = db.scalar(select(Album).where(Album.artist_id == artist_row.id, func.lower(Album.title) == album_name.lower()))
-                if album_row is None:
-                    album_row = Album(artist_id=artist_row.id, title=album_name)
-                    db.add(album_row)
-                    db.flush()
+            album_row = albums.find_or_create_album(db, people, album_name) if album_name else None
             track = Track(
                 id=uuid.UUID(tid), artist_id=artist_row.id, album_id=album_row.id if album_row else None, uploader_id=user.id,
                 title=title, genre=tags.get("genre") or None, license=args.license, status="uploaded", source_key=key,
