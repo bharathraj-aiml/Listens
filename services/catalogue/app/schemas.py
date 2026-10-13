@@ -41,6 +41,7 @@ class TrackOut(BaseModel):
 class UploadOut(BaseModel):
     track: TrackOut
     duplicate: bool
+    reason: str | None = None  # why it counts as a repeat, when `duplicate`
 
 
 class ArtistDetail(BaseModel):

@@ -92,17 +92,16 @@ def main() -> None:
                     tags = tags_mod.read_tags(fh)
                 with open(path, "rb") as fh:
                     lyrics = tags_mod.read_lyrics(fh)
+                with open(path, "rb") as fh:
+                    duration_ms = tags_mod.read_duration_ms(fh)
             title = (tags.get("title") or "Untitled").strip()[:200]
             artist_name = (tags.get("artist") or "Unknown Artist").strip()[:200]
             album_name = (tags.get("album") or "").strip()[:200] or None
             label = f"{tid[:8]}  {artist_name} - {title}"
 
-            if db.scalar(select(Track).where(Track.uploader_id == user.id, Track.content_sha256 == digest)):
-                print(f"skip  {label}  (identical file already in the library)")
-                skipped += 1
-                continue
-            if dedupe.find_duplicates(db, user.id, title, artist_name, album_name):
-                print(f"skip  {label}  (same song already in the library)")
+            match = dedupe.check_duplicate(db, user.id, title=title, credit=artist_name, album=album_name, duration_ms=duration_ms, sha256=digest)
+            if match:
+                print(f"skip  {label}  ({match.reason})")
                 skipped += 1
                 continue
             print(f"add   {label}  [{album_name or 'no album'}]  {obj['Size'] / 1e6:.1f} MB")
@@ -115,7 +114,7 @@ def main() -> None:
             track = Track(
                 id=uuid.UUID(tid), artist_id=artist_row.id, album_id=album_row.id if album_row else None, uploader_id=user.id,
                 title=title, genre=tags.get("genre") or None, license=args.license, status="uploaded", source_key=key,
-                content_sha256=digest, lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
+                content_sha256=digest, duration_ms=duration_ms, lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
             )
             db.add(track)
             db.flush()

@@ -23,6 +23,19 @@ def read_tags(fileobj: BinaryIO) -> dict[str, str]:
     return out
 
 
+def read_duration_ms(fileobj: BinaryIO) -> int | None:
+    """Length of the audio in ms from its headers, or None when it cannot be read. Never raises."""
+    try:
+        fileobj.seek(0)
+        audio = mutagen.File(fileobj)
+        length = getattr(getattr(audio, "info", None), "length", None)
+        return int(length * 1000) if length else None
+    except Exception:
+        return None
+    finally:
+        fileobj.seek(0)
+
+
 def _sylt_to_lrc(sylt) -> str | None:
     """Convert an ID3 SYLT frame's (text, ms) pairs into LRC "[mm:ss.xx]line" text.
     SYLT.format == 2 means milliseconds (the common case); frame-count timing (format 1)

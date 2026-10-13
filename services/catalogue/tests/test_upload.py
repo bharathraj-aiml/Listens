@@ -162,3 +162,26 @@ def test_the_same_song_credited_with_other_separators_is_a_duplicate(env):
     again = post(env, testing.make_audio(env.dir / "b.mp3", seconds=2, title="Same", artist="B, A"))
     assert again.status_code == 200 and again.json()["duplicate"] is True
     assert again.json()["track"]["id"] == first["track"]["id"]
+
+
+def test_a_spelling_variant_is_refused_before_it_reaches_storage_with_a_reason_and_can_be_forced(env):
+    first = post(env, testing.make_audio(env.dir / "a.mp3", seconds=3, title="Veettu Thottathil", artist="Rahman", album="Gentleman")).json()
+    s = get_settings()
+    before = [o["Key"] for o in get_s3().list_objects_v2(Bucket=s.s3_bucket_audio).get("Contents", [])]
+
+    # same recording, different spelling and a fuller credit, different bytes; the file's own length (3 s) is compared
+    again = post(env, testing.make_audio(env.dir / "b.mp3", seconds=3, title="Veetu Thotathil", artist="Rahman/Vairamuthu", album="Gentleman (Original Motion Picture Soundtrack)"))
+    assert again.status_code == 200
+    body = again.json()
+    assert body["duplicate"] is True and body["track"]["id"] == first["track"]["id"]
+    assert "spelling or credit" in body["reason"]
+    assert [o["Key"] for o in get_s3().list_objects_v2(Bucket=s.s3_bucket_audio).get("Contents", [])] == before  # nothing uploaded
+
+    forced = post(env, testing.make_audio(env.dir / "c.mp3", seconds=3, title="Veetu Thotathil", artist="Rahman/Vairamuthu"), {"force": "true"})
+    assert forced.status_code == 201 and forced.json()["duplicate"] is False
+
+
+def test_a_slowed_version_or_a_much_longer_file_is_not_called_a_repeat(env):
+    post(env, testing.make_audio(env.dir / "a.mp3", seconds=3, title="Jumpstyle", artist="Twxny"))
+    assert post(env, testing.make_audio(env.dir / "b.mp3", seconds=4, title="Jumpstyle - Slowed", artist="Twxny")).status_code == 201
+    assert post(env, testing.make_audio(env.dir / "c.mp3", seconds=40, title="Jumpstyle", artist="Twxny")).status_code == 201

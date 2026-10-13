@@ -135,9 +135,10 @@ def test_a_lower_quality_copy_is_deleted_once_it_is_ready(env):
         db.commit()
     new = env.add_track(testing.make_audio(env.dir / "new.mp3", seconds=8, bitrate="192k"))
     with env.sessions() as db:
-        assert jobs.process_track(db, env.s3, env.cfg, new) == "ready"
+        # clearly lower quality than the ready copy: dropped before it is transcoded at all
+        assert jobs.process_track(db, env.s3, env.cfg, new) == "skipped"
     assert env.track(new) is None and env.track(twin) is not None
-    assert keys(env, prefix=f"hls/{new}/") == []  # the loser's transcoded files were removed from storage too
+    assert keys(env, prefix=f"hls/{new}/") == []  # nothing of the loser was transcoded or kept in storage
 
 
 def test_a_higher_quality_new_copy_replaces_the_old_one(env):
@@ -151,3 +152,27 @@ def test_a_higher_quality_new_copy_replaces_the_old_one(env):
     with env.sessions() as db:
         assert jobs.process_track(db, env.s3, env.cfg, new) == "ready"
     assert env.track(old) is None and env.track(new).status == "ready"
+
+
+def test_a_repeat_of_a_ready_song_is_removed_before_its_original_is_downloaded_or_transcoded(env):
+    kept = env.add_track(testing.make_audio(env.dir / "keep.mp3", seconds=2), status="ready", key="originals/keep/source.mp3")
+    repeat = env.add_track(testing.make_audio(env.dir / "again.mp3", seconds=2), key="originals/again/source.mp3")
+    with env.sessions() as db:
+        db.execute(update(Track).where(Track.id == kept).values(title="Mazhai Kuruvi", duration_ms=2000, source_bitrate_kbps=320))
+        db.execute(update(Track).where(Track.id == repeat).values(title="Mazhai Kuruvi (From Film)"))  # same song, spelling noise
+        db.commit()
+        assert jobs.process_track(db, env.s3, env.cfg, repeat) == "skipped"
+    assert env.track(repeat) is None  # the repeat is gone
+    assert env.track(kept).status == "ready"
+    assert keys(env, prefix="originals/again/") == []  # its original was deleted from storage
+    assert keys(env, prefix=f"hls/{repeat}/") == []  # and nothing was transcoded
+
+
+def test_a_different_song_by_the_same_artist_is_still_processed(env):
+    env.add_track(testing.make_audio(env.dir / "a.mp3", seconds=2), status="ready", key="originals/a/source.mp3")
+    other = env.add_track(testing.make_audio(env.dir / "b.mp3", seconds=3), key="originals/b/source.mp3")
+    with env.sessions() as db:
+        db.execute(update(Track).where(Track.status == "ready").values(title="First Song"))
+        db.execute(update(Track).where(Track.id == other).values(title="Completely Different"))
+        db.commit()
+        assert jobs.process_track(db, env.s3, env.cfg, other) == "ready"

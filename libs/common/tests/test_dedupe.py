@@ -170,3 +170,41 @@ def test_a_new_ready_track_removes_its_spelling_variant_and_play_history_follows
     with patch("listens_common.storage.delete_prefix"):
         dedupe.remove_track(db, s3, settings, twin, keep=keep)
     assert db.query(PlayEvent).one().track_id == keep.id
+
+
+# ------------------------------------------------------- the pre-upload checking layer
+
+def _check(db, u, **kw):
+    kw.setdefault("title", "Moon Walk")
+    kw.setdefault("credit", "The Echoes")
+    return dedupe.check_duplicate(db, u.id, **kw)
+
+
+def test_check_duplicate_tiers_identical_bytes_exact_and_variant():
+    db, u, other = make_world()
+    t = add_track(db, u, title="Veettu Thottathil", artist="Rahman", album="Gentleman", ms=245_000)
+    t.content_sha256 = "abc123"
+    db.commit()
+    assert _check(db, u, title="Different", credit="Someone", sha256="abc123").reason.startswith("this exact file")
+    assert _check(db, u, title="veettu thottathil!", credit="rahman").reason.startswith("same title and artist")
+    variant = _check(db, u, title="Veetu Thotathil", credit="Rahman, Vairamuthu", album="Gentleman (Original Motion Picture Soundtrack)", duration_ms=244_000)
+    assert variant is not None and variant.track.id == t.id and "spelling or credit" in variant.reason
+    assert _check(db, other, title="Veetu Thotathil", credit="Rahman") is None  # another user's library is irrelevant
+
+
+def test_check_duplicate_lets_genuinely_different_songs_and_versions_through():
+    db, u, _ = make_world()
+    add_track(db, u, title="Jumpstyle", artist="Twxny", ms=120_000)
+    assert _check(db, u, title="Jumpstyle - Slowed", credit="Twxny", duration_ms=121_000) is None  # a different version
+    assert _check(db, u, title="Jumpstyle", credit="Twxny", duration_ms=300_000) is None  # a very different length (a long mix)
+    assert _check(db, u, title="Jumpstyle", credit="Twxny", duration_ms=121_000) is not None  # the same length is a repeat
+    assert _check(db, u, title="Another Song", credit="Twxny", duration_ms=120_000) is None
+    assert _check(db, u, title="Jumpstyle", credit="Unknown Artist") is None  # untagged: only bytes are compared
+
+
+def test_find_ready_twin_only_returns_processed_songs():
+    db, u, _ = make_world()
+    ready = add_track(db, u, title="Mazhai Kuruvi", artist="Rahman", status="ready")
+    waiting = add_track(db, u, title="Mazhai Kuruvi", artist="Rahman, Vairamuthu", status="uploaded", ms=348_000)
+    assert dedupe.find_ready_twin(db, waiting).id == ready.id
+    assert dedupe.find_ready_twin(db, ready) is None  # the only processed copy is never a repeat of a waiting one

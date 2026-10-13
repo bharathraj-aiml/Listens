@@ -60,3 +60,18 @@ test("a song stored on the device keeps this device's time but takes the server'
   const merged = mergeRecents([fresh], [{ track: stale, at: 5000 }]);
   assert.deepEqual(merged.map((x) => x.cover_url), ["/cover/new-token"]);
 });
+
+test("a stored song the server no longer lists (deleted or merged) is dropped once the server has newer history", () => {
+  const live = track("Live", { played_at: "2026-10-12T05:00:00Z" });
+  const ghost = track("Ghost");
+  const justPlayed = track("JustPlayed");
+  const merged = mergeRecents(
+    [live],
+    [{ track: ghost, at: at("2026-10-12T02:00:00Z") }, { track: justPlayed, at: at("2026-10-12T06:00:00Z") }],
+  );
+  assert.deepEqual(titles(merged), ["JustPlayed", "Live"]); // ghost gone; the not-yet-synced listen stays
+});
+
+test("with no server data the on-device list still shows (offline or the request failed)", () => {
+  assert.deepEqual(titles(mergeRecents([], [{ track: track("Only"), at: 1 }])), ["Only"]);
+});

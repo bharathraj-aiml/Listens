@@ -57,17 +57,30 @@ def version_words(title: str | None) -> frozenset[str]:
     return frozenset(m.group(0) for m in _VERSION.finditer((title or "").casefold()))
 
 
+def _people_keys(names) -> set[str]:
+    """Credited people as comparable keys (case, punctuation and known misspellings folded)."""
+    from .artists import person_name  # lazy: artists imports norm from here
+
+    return {k for n in names if (k := norm(person_name(n)))}
+
+
 @dataclass
 class SongInfo:
     title: str
-    people: set = field(default_factory=set)  # credited artist ids
+    people: set = field(default_factory=set)  # credited people as name keys, see _people_keys
     album: str | None = None
     duration_ms: int | None = None
 
     @classmethod
     def of(cls, track: Track, album_title: str | None = None) -> "SongInfo":
         album = album_title if album_title is not None else (track.album.title if track.album else None)
-        return cls(track.title, {a.id for a in (track.artists or [track.artist])}, album, track.duration_ms)
+        return cls(track.title, _people_keys(a.name for a in (track.artists or [track.artist])), album, track.duration_ms)
+
+    @classmethod
+    def from_upload(cls, title: str, credit: str, album: str | None = None, duration_ms: int | None = None) -> "SongInfo":
+        from .artists import credit_names
+
+        return cls(title, _people_keys(credit_names(credit)), album, duration_ms)
 
 
 SAME_DURATION_MS = 5_000
@@ -151,6 +164,62 @@ def find_duplicates(
     return out
 
 
+@dataclass
+class DuplicateMatch:
+    track: Track
+    reason: str
+
+
+def check_duplicate(
+    db: Session, uploader_id: uuid.UUID | None, *, title: str, credit: str, album: str | None = None,
+    duration_ms: int | None = None, sha256: str | None = None, exclude_id: uuid.UUID | None = None,
+) -> DuplicateMatch | None:
+    """The checking layer in front of every way a song enters the library. Four tiers, cheapest first, against this
+    uploader's songs (waiting, processing and ready):
+
+      1. identical bytes (SHA-256)
+      2. same title and the same people credited (any separators/order), compatible album
+      3. the same recording under a spelling or credit variation: similar title once spelling noise is stripped, the
+         same version (a slowed or live edit is never a repeat), a compatible length (the file's real duration when
+         known) and a shared artist or album
+      4. (the worker's guard, `find_ready_twin`, repeats 2 and 3 before an original is downloaded)
+
+    Returns the existing song and a human reason, or None when the song is new. Untagged files ("Unknown Artist") are
+    only checked by bytes: a filename title proves nothing."""
+    if uploader_id is None:
+        return None
+    if sha256:
+        same = db.scalar(select(Track).where(Track.uploader_id == uploader_id, Track.content_sha256 == sha256, Track.id != (exclude_id or uuid.UUID(int=0))))
+        if same is not None:
+            return DuplicateMatch(same, "this exact file is already in your library")
+    if norm(credit) in UNKNOWN_ARTISTS or not norm(title):
+        return None
+    exact = [
+        t for t in find_duplicates(db, uploader_id, title, credit, album, exclude_id=exclude_id)
+        # a clearly different length is a different recording even under the same title (a long mix, an extended cut)
+        if not (duration_ms and t.duration_ms and abs(t.duration_ms - duration_ms) > DIFFERENT_DURATION_MS)
+    ]
+    if exact:
+        return DuplicateMatch(exact[0], "same title and artist already in your library")
+    me = SongInfo.from_upload(title, credit, album, duration_ms)
+    for t in db.scalars(select(Track).where(Track.uploader_id == uploader_id, Track.status.in_(LIVE_STATUSES), Track.id != (exclude_id or uuid.UUID(int=0)))).unique():
+        if likely_same_song(me, SongInfo.of(t)):
+            return DuplicateMatch(t, f'looks like "{t.title}" already in your library (spelling or credit differs)')
+    return None
+
+
+def find_ready_twin(db: Session, track: Track) -> Track | None:
+    """A processed ('ready') song that `track` repeats, judged from tags alone (its length is not known until it is
+    transcoded). The worker uses this before downloading an original, so a repeat costs no storage bandwidth."""
+    from .artists import credit_of
+
+    match = check_duplicate(
+        db, track.uploader_id, title=track.title, credit=credit_of(track), album=track.album.title if track.album else None,
+        exclude_id=track.id,
+    )
+    return match.track if match is not None and match.track.status == "ready" else None
+
+
 def pick_keeper(tracks: list[Track]) -> Track:
     """Highest source bitrate wins; on a tie the oldest upload (it's the one already in playlists)."""
     return min(tracks, key=lambda t: (-(t.source_bitrate_kbps or 0), t.created_at, str(t.id)))
@@ -160,7 +229,7 @@ def remove_track(db: Session, s3, settings, track: Track, keep: Track | None = N
     """Delete a track's rows and its B2 files. Likes and playlist entries move to `keep` first."""
     from .storage import delete_prefix  # lazy: only services with the [storage] extra need boto3
 
-    tid, cover_key = track.id, track.cover_key
+    tid, cover_key, source_key = track.id, track.cover_key, track.source_key
     if keep is not None:
         for like in db.scalars(select(Like).where(Like.track_id == tid)).all():
             if db.get(Like, (like.user_id, keep.id)) is None:
@@ -172,6 +241,8 @@ def remove_track(db: Session, s3, settings, track: Track, keep: Track | None = N
     db.delete(track)
     db.commit()
     delete_prefix(s3, settings.s3_bucket_audio, f"originals/{tid}/")
+    if source_key and not source_key.startswith(f"originals/{tid}/"):
+        s3.delete_object(Bucket=settings.s3_bucket_audio, Key=source_key)  # an original stored under another layout
     delete_prefix(s3, settings.s3_bucket_audio, f"hls/{tid}/")
     if cover_key:
         s3.delete_object(Bucket=settings.s3_bucket_covers, Key=cover_key)

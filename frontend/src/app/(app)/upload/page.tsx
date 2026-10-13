@@ -6,7 +6,7 @@ import { api, get, upload } from "@/lib/api";
 import type { Track } from "@/lib/types";
 
 const LICENSES = ["Own work", "Personal library", "CC BY 4.0", "CC BY-SA 4.0", "CC BY-NC 4.0", "CC0 / Public domain"];
-type Item = { name: string; progress: number; state: "waiting" | "uploading" | "done" | "duplicate" | "error"; message?: string };
+type Item = { name: string; progress: number; state: "waiting" | "uploading" | "done" | "duplicate" | "error"; message?: string; reason?: string };
 
 export default function UploadPage() {
   const [files, setFiles] = useState<File[]>([]);
@@ -43,8 +43,8 @@ export default function UploadPage() {
       if (files.length === 1) for (const [k, v] of Object.entries(meta)) if (v.trim()) form.append(k, v.trim());
       patch(i, { state: "uploading" });
       try {
-        const res = await upload<{ duplicate: boolean }>("/api/catalogue/upload", form, (f) => patch(i, { progress: f }));
-        patch(i, { state: res.duplicate ? "duplicate" : "done", progress: 1 });
+        const res = await upload<{ duplicate: boolean; reason?: string | null }>("/api/catalogue/upload", form, (f) => patch(i, { progress: f }));
+        patch(i, { state: res.duplicate ? "duplicate" : "done", progress: 1, reason: res.reason ?? undefined });
       } catch (err) {
         patch(i, { state: "error", message: (err as Error).message });
       }
@@ -115,7 +115,7 @@ export default function UploadPage() {
               <div className="flex justify-between gap-3">
                 <span className="truncate">{it.name}</span>
                 <span className={it.state === "error" ? "text-danger" : it.state === "done" ? "text-ok" : "text-muted"}>
-                  {it.state === "uploading" ? `${Math.round(it.progress * 100)}%` : it.state === "duplicate" ? "already uploaded" : it.state === "error" ? it.message : it.state}
+                  {it.state === "uploading" ? `${Math.round(it.progress * 100)}%` : it.state === "duplicate" ? `already in your library${it.reason ? ` (${it.reason})` : ""}` : it.state === "error" ? it.message : it.state}
                 </span>
               </div>
               {it.state === "uploading" && <div className="mt-1 h-1 rounded bg-line"><div className="h-1 rounded bg-accent" style={{ width: `${it.progress * 100}%` }} /></div>}

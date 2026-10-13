@@ -26,7 +26,7 @@ from .schemas import (
     TrackOut, UploadOut,
 )
 from .serialize import track_out
-from .tags import read_lyrics, read_tags
+from .tags import read_duration_ms, read_lyrics, read_tags
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("catalogue")
@@ -77,6 +77,7 @@ def upload(
     artist: str | None = Form(None, max_length=200),
     album: str | None = Form(None, max_length=200),
     genre: str | None = Form(None, max_length=60),
+    force: bool = Form(False),  # upload even if it looks like a song already in the library (a deliberate second version)
     user_id: uuid.UUID = Depends(current_user_id),
     db: Session = Depends(get_db),
     r: Redis = Depends(get_redis),
@@ -115,10 +116,15 @@ def upload(
     album_name = album or tags.get("album")
     # Same song in a different file (e.g. a re-encode): refuse it the same way a byte-identical
     # upload is refused, before creating any artist/album rows or touching B2.
-    same_song = dedupe.find_duplicates(db, user_id, final_title, final_artist, album_name.strip() if album_name else None)
-    if same_song:
+    # (checked before anything reaches B2). Exact and near matches alike: see dedupe.check_duplicate.
+    duration_ms = read_duration_ms(file.file)
+    match = None if force else dedupe.check_duplicate(
+        db, user_id, title=final_title, credit=final_artist, album=album_name.strip() if album_name else None,
+        duration_ms=duration_ms, sha256=digest,
+    )
+    if match:
         response.status_code = status.HTTP_200_OK
-        return UploadOut(track=track_out(same_song[0], settings, user_id), duplicate=True)
+        return UploadOut(track=track_out(match.track, settings, user_id), duplicate=True, reason=match.reason)
     # one artist per person in the credit ("A/B", "A, B" and "A;B" all credit A and B); the first is the primary artist
     people = artists.ensure_artists(db, user_id, final_artist)
     artist_row = people[0]
@@ -133,7 +139,7 @@ def upload(
     track = Track(
         id=track_id, artist_id=artist_row.id, album_id=album_row.id if album_row else None, uploader_id=user_id,
         title=final_title, genre=(genre or tags.get("genre") or None), license=license.strip(),
-        status="uploaded", source_key=source_key, content_sha256=digest,
+        status="uploaded", source_key=source_key, content_sha256=digest, duration_ms=duration_ms,
         lyrics=lyrics.get("lyrics"), lyrics_synced=lyrics.get("lyrics_synced"),
     )
     db.add(track)

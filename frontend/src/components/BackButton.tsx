@@ -15,6 +15,8 @@ export default function BackButton() {
   // The trail updates in an effect, so for one render after navigating it still describes the page we
   // just left. Only trust it once it ends at the current page; Home never shows an arrow.
   if (pathname === "/") return null;
+  // Settings pages (/profile/...) have their own plain "back" arrow beside the title; two arrows would stack.
+  if (pathname.startsWith("/profile/")) return null;
   const trailIsCurrent = stack[stack.length - 1] === pathname;
   const previous = trailIsCurrent && stack.length > 1 ? stack[stack.length - 2] : "/";
 
@@ -26,7 +28,7 @@ export default function BackButton() {
         markBackNavigation();
         router.replace(previous);
       }}
-      className="glass-card mb-4 flex size-11 md:hidden items-center justify-center rounded-full border border-line bg-panel text-fg transition-colors hover:bg-raise active:scale-95"
+      className="-ml-2 mb-2 flex size-11 items-center justify-center rounded-full text-muted transition-colors hover:text-fg active:scale-90 md:hidden"
     >
       <BackIcon />
     </button>

@@ -53,6 +53,10 @@ the next starts. It is live, running entirely on free tiers (see "Deployment (fr
     ├── run_local_worker.sh     # run the transcode worker on this PC against production (fast; Render's is the slow fallback)
     ├── enrich_library.py       # fetch artist relatedness / tags and audio fingerprints for the recommender
     ├── dedupe_library.py       # list / delete duplicate songs (same title + artist, compatible album)
+    ├── dedupe_similar.py       # the same, for spelling/credit variants of a song; also deletes their B2 files
+    ├── clean_b2_orphans.py     # delete B2 folders and covers that no song refers to
+    ├── clean_album_titles.py   # strip "(Original Motion Picture Soundtrack)" etc. and merge repeated albums
+    ├── process_queue.py        # transcode the waiting songs on this PC, N at a time, within a B2 download budget
     ├── split_artist_credits.py # one artist per person: split "A, B, C" credit rows and credit each song to everyone on it
     ├── normalize_artists.py    # merge artists that differ only by "/" vs "," credit separators (superseded by the split)
     ├── register_b2_orphans.py  # add songs that are in the B2 bucket but missing from the app
@@ -125,6 +129,16 @@ A manual-only `warm-front-services` job wakes the user-facing services before yo
 migration must reach production in the same push as the code that contains it: applying it to the database first makes
 the deployed auth image fail with `Can't locate revision identified by '00NN'` and sign-in stays down until the push lands.
 
+**Repeat check (before a song goes in).** Every way a song enters the library runs `dedupe.check_duplicate` first: the web
+upload, `import_local_folder.py` and `register_b2_orphans.py` (the import through the API uses the upload endpoint). Tiers, cheapest
+first: identical bytes (SHA-256); the same title and the same people credited (any separators or order) with a compatible
+length; and a spelling or credit variant of the same recording (title with "(From ...)" and romanisation noise folded,
+the same version so a slowed, live or remix edit is never a repeat, a compatible length from the file's own header, and a
+shared artist or album). A refused upload returns `duplicate: true` with a plain-language `reason` (shown on the Upload page)
+and writes nothing to B2; `force=true` overrides it for a deliberate second version. The worker repeats the check from the
+tags before it downloads an original, so a repeat costs no storage bandwidth (a clearly better-quality re-upload, judged from
+file size, is still processed and replaces the old copy), and after transcoding the best copy of a group is kept.
+
 **Settings that matter.**
 
 | Variable | Meaning |
@@ -143,7 +157,11 @@ small batches (the scripts report how many bytes they will download), and let th
 ```bash
 set -a; source .env.prod; set +a                        # production values (gitignored)
 .venv/Scripts/python scripts/split_artist_credits.py   # one artist per person in a credit (--apply to commit)
-.venv/Scripts/python scripts/dedupe_library.py          # duplicate songs                  (--apply to delete)
+.venv/Scripts/python scripts/dedupe_library.py          # exact duplicate songs            (--apply to delete)
+.venv/Scripts/python scripts/dedupe_similar.py          # spelling/credit variants + files (--apply to delete)
+.venv/Scripts/python scripts/clean_b2_orphans.py        # B2 files no song refers to       (--apply to delete)
+.venv/Scripts/python scripts/clean_album_titles.py      # tidy album titles, merge repeats (--apply to save)
+.venv/Scripts/python scripts/process_queue.py --budget-mb 300 --workers 2 --apply   # transcode the waiting songs here
 .venv/Scripts/python scripts/register_b2_orphans.py     # songs in B2 but not in the app   (--apply to add)
 ```
 
@@ -169,6 +187,13 @@ Uploads and the import scripts do this automatically; `split_artist_credits.py` 
   tap-to-seek work) with a fill that glides between position updates, a handle that grows under a finger and softly
   pulses while playing, and a sweeping track while buffering. In the lyrics view the current line fills left to right
   with its progress. All motion stops under `prefers-reduced-motion`.
+- **Search filters.** Chips for All / Artist / Album / Genre / Mood. Artist finds every song they are credited on, Album its
+  songs, Genre a tag, and Mood takes everyday words ("sad", "chill", "party") and lists the clearest examples first; Genre and
+  Mood show tap-to-pick lists with counts (`/search?by=...`, `/search/facets`).
+- **Thumbnails.** Signed cover links are valid for at least a full day-window, Recently played always uses the server's fresh
+  copy of a song (and drops songs the server no longer has), and a cover that cannot load shows the placeholder, never a
+  broken-image icon.
+- **Back navigation.** One plain back arrow per page on phones; settings pages show only their own "‹" beside the title.
 - **Recently played** reflects what you actually listened to (a song counts after 8 s, so skips don't), updates live
   without a refresh from an on-device list merged with the server's.
 
@@ -392,9 +417,9 @@ Docker Desktop (Windows), not a simulated or sandboxed substitute.
   `canPlayType`), and once with the **actual production default**, `HLS_AUDIO_CODEC=aac`, using the real system Edge
   browser (confirmed via `canPlayType` to have full AAC support) — so the real default is verified end-to-end, not just
   the CI-friendly fallback.
-- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 202 Python tests
-  (common 38, auth 16, catalogue 89 + 5 skipped without Postgres, stream 8, worker 24, events 12, recommender 15),
-  11 site-Worker tests, 6 CDN-Worker tests and 21 frontend unit tests, all passing; the new interface states were also
+- At the end of Phase 5: 117 Python tests and a clean `tsc --noEmit`/`next build`. **Today:** 224 Python tests
+  (common 54, auth 16, catalogue 93 + 5 skipped without Postgres, stream 8, worker 26, events 12, recommender 15),
+  11 site-Worker tests, 6 CDN-Worker tests and 24 frontend unit tests, all passing; the new interface states were also
   checked in a real browser with a mocked, deliberately slow API (skeletons, banner timing, sign-in state, seek-bar fill,
   reduced motion, sidebar collapse and persistence, panel layout).
 - **Phase 3:** a full backend flow via curl against the live stack (lyrics extraction and retrieval, likes, follows,

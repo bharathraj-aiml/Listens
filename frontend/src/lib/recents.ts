@@ -23,11 +23,18 @@ export function mergeRecents(server: Track[], local: LocalRecent[], limit = RECE
     if (!have || at > have.at || (at === have.at && fromLocal)) best.set(track.id, { track, at, fromLocal });
   };
   const fresh = new Map(server.map((t) => [t.id, t]));
+  let newestServer = -Infinity;
   server.forEach((track, i) => {
     const parsed = track.played_at ? Date.parse(track.played_at) : NaN;
+    if (Number.isFinite(parsed)) newestServer = Math.max(newestServer, parsed);
     offer(track, Number.isFinite(parsed) ? parsed : -1 - i, false);
   });
-  local.forEach((l) => offer(l.track, l.at, true));
+  // The server is the authority on anything it has had time to hear about. A song stored on this device that the server
+  // does not list, although it is OLDER than the server's newest listen, no longer exists (deleted or merged as a
+  // duplicate): showing it would be a dead tile with a broken cover that cannot play. Newer than the server's newest
+  // listen means the server just has not caught up yet, so those stay. With no server data at all, everything stays.
+  const synced = (l: LocalRecent) => fresh.size === 0 || fresh.has(l.track.id) || l.at > newestServer;
+  local.filter(synced).forEach((l) => offer(l.track, l.at, true));
   return [...best.values()]
     .filter((x) => x.track.status === "ready")
     .sort((a, b) => b.at - a.at || Number(b.fromLocal) - Number(a.fromLocal))

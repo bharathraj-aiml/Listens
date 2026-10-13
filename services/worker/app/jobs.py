@@ -53,6 +53,20 @@ def ensure_group(r: Redis) -> None:
             raise
 
 
+BETTER_QUALITY_FACTOR = 1.15
+
+
+def _looks_better_quality(s3, settings: Settings, track: Track, twin: Track) -> bool:
+    """Whether the waiting original is clearly higher bitrate than the ready copy it repeats, estimated from its size
+    and the song's length, so a better re-upload is still transcoded and replaces the old copy (dedupe keeps the best
+    source). Unknown on either side counts as "maybe better": the normal after-transcode check then decides."""
+    duration_ms = track.duration_ms or twin.duration_ms
+    if not twin.source_bitrate_kbps or not duration_ms or not track.source_key:
+        return True
+    size = s3.head_object(Bucket=settings.s3_bucket_audio, Key=track.source_key)["ContentLength"]
+    return size * 8 / duration_ms > twin.source_bitrate_kbps * BETTER_QUALITY_FACTOR  # bits per ms == kbit/s
+
+
 def process_track(db: Session, s3, settings: Settings, track_id) -> str:
     """Transcode one track. Returns 'ready' | 'skipped'. Raises on failure (caller handles retry)."""
     # Atomic claim: only one worker can flip uploaded -> processing.
@@ -65,6 +79,17 @@ def process_track(db: Session, s3, settings: Settings, track_id) -> str:
         return "skipped"  # already processing/ready/failed, or the track was deleted
 
     track = db.get(Track, track_id)
+    # Last line of defence against repeats: judged from tags alone, BEFORE the original is downloaded from B2 (which
+    # counts against the daily download cap) and transcoded. A song that repeats one already ready is removed.
+    try:
+        twin = dedupe.find_ready_twin(db, track)
+        if twin is not None and not _looks_better_quality(s3, settings, track, twin):
+            log.info("track %s repeats ready track %s (%s); removing it without transcoding", track_id, twin.id, twin.title)
+            dedupe.remove_track(db, s3, settings, track, keep=twin)
+            return "skipped"
+    except Exception:  # noqa: BLE001 - the check must never block a genuine song
+        db.rollback()
+        log.exception("repeat check failed for track %s; processing it normally", track_id)
     with tempfile.TemporaryDirectory(prefix="transcode-") as tmp:
         tmp_dir = Path(tmp)
         src = tmp_dir / "source"
