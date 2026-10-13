@@ -121,6 +121,10 @@ month, and keeping services awake around the clock would use them all. For faste
 PC (`scripts/run_local_worker.sh`, against production) while the laptop is on; each job goes to exactly one worker.
 A manual-only `warm-front-services` job wakes the user-facing services before you share the link.
 
+**Migrations.** The auth service runs `alembic upgrade head` every time it starts (including every wake-up). So a new
+migration must reach production in the same push as the code that contains it: applying it to the database first makes
+the deployed auth image fail with `Can't locate revision identified by '00NN'` and sign-in stays down until the push lands.
+
 **Settings that matter.**
 
 | Variable | Meaning |
